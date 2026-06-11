@@ -1,0 +1,6 @@
+{:name "Jolt"
+ :motd "deps.edn libraries running on Janet"
+ :features ["Selmer templates"
+            "yogthos/config"
+            "an nREPL you can connect an editor to"
+            "a native executable build"]}
