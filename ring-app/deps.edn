@@ -1,0 +1,14 @@
+{:paths ["src"]
+
+ :deps {ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
+                        :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
+                        :deps/root "ring-core"}
+        ring/ring-codec {:git/url "https://github.com/ring-clojure/ring-codec"
+                         :git/sha "1b2bdf11bcd057720141124e5f33c6f3e2a46790"}}
+
+ :aliases {:nrepl {:main-opts ["nrepl-server"]}
+           :test  {:extra-paths ["test"]
+                   :main-opts ["-m" "app.core-test"]}}
+
+ :tasks {run  {:doc "run the server" :main-opts ["-m" "app.core"]}
+         test "jolt-deps -M:test"}}
