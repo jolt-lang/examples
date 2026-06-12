@@ -36,7 +36,8 @@ Apple M1 Max, same source, mean of timed runs after warmup:
 | jank 0.1-alpha, `-O3 -Odirect-call` | 1.08 s | 0.8× |
 | Clojure JVM 1.12 | 1.40 s | 1.0× |
 | jank 0.1-alpha, no flags | 14.5 s | 10× |
-| jolt (compile mode) | 15.8 s | 11× |
+| jolt (compile mode) | 15.3 s | 11× |
+| jolt (compile + `JOLT_DIRECT_LINK=1`) | 13.1 s | 9× |
 
 jolt's first run of this benchmark took 165.6 s (118× JVM). The profile it
 produced drove a round of runtime optimizations (jolt PR #91 — inlined
@@ -67,8 +68,32 @@ forms remain in the compiler's frozen interpret-only punt set — the port
 uses `clojure.math` (Clojure 1.11), which jolt backs directly with Janet's
 math natives so calls compile and direct-link.
 
-The remaining ~11× over the JVM is the floor of the current object model:
+The remaining gap over the JVM is the floor of the current object model:
 a Janet struct allocation per vec3 op and a guard-plus-opcode-get per
-keyword access, where the JVM JIT escapes most of the allocations
-entirely. Closing that gap is jank-style object-model work (jolt-4vr has
-the notes).
+keyword access, where the JVM JIT inlines the small fns and escapes most
+of the allocations entirely. Closing that gap is jank-style object-model
+work, in two routes.
+
+The first route is AOT escape analysis: IR passes that inline small
+direct-linked fns and then scalar-replace the intermediate maps a vec3
+chain builds, so `(:r {:r a ..})` becomes `a` once inlining exposes the
+literal. It is on with `JOLT_DIRECT_LINK=1`, off by default since it trades
+away redefinition (the same trade as Clojure's `:direct-linking` and jank's
+`-Odirect-call`). On a loop whose temporaries never escape it is dramatic.
+A `reflect`/`dot` kernel goes from 9.3 s to 0.38 s (25×), the loop body
+reduced to pure arithmetic. On this ray tracer it is only 1.17× (15.3 s to
+13.1 s), because the work here is dominated by lookups on maps that
+genuinely escape (rays, hits, materials, the scene's hittables, the
+`reduce` accumulator) and by dynamic dispatch (the `reduce` closure and the
+`:scatter` fn stored in a material map), none of which escape analysis can
+remove. The intermediate vec3 temporaries it does eliminate, like `oc` in
+`hit-sphere` and the chains in `reflect`/`refract`/`normalize`, are a
+minority of the cost on this program.
+
+The second route, where the rest of the headroom is, is shape-based
+aggregates (V8-style hidden classes, or records): for maps with a known key
+set, store the keys once in a shared shape and the values in a flat array,
+so a constant-keyword lookup against a known shape compiles to an index
+access and the allocation is flat. That turns the many lookups on the real,
+escaping maps into array indexing, which is exactly the part the first
+route cannot touch.
