@@ -1,20 +1,42 @@
 # ring-app
 
-[Ring](https://github.com/ring-clojure/ring) on Jolt: `ring-core` and
-`ring-codec` come straight from their git repos via `deps.edn` (no forks, no
-patches), and a small adapter (`ring-janet.adapter`) runs Ring handlers on
-[spork/http](https://janet-lang.org/spork/api/http.html) — Janet's HTTP
-server — through jolt's `janet.*` interop bridge.
+The Jolt example app: [Ring](https://github.com/ring-clojure/ring) middleware,
+[Selmer](https://github.com/yogthos/Selmer) HTML templates, and
+[yogthos/config](https://github.com/yogthos/config) — all loaded straight from
+their git repos via `deps.edn` (no forks, no patches) — served by a small Ring
+adapter (`ring-janet.adapter`) over
+[spork/http](https://janet-lang.org/spork/api/http.html), Janet's HTTP server,
+through jolt's `janet.*` interop bridge.
 
-The adapter lives in `src/ring_janet/adapter.clj` for now; it will move to
-its own library once it has soaked.
+```
+deps.edn                       ring-core (:deps/root), ring-codec, Selmer,
+                               config, and spork/http as a :jpm/module dep
+config.edn                     runtime config — :port, greeting content
+resources/templates/index.html the Selmer HTML template
+src/ring_janet/adapter.clj     the Ring <-> spork/http adapter
+src/app/core.clj               handler + middleware stack + -main
+test/                          render, middleware, config, and live-server checks
+main.janet / project.janet /   native-executable build (build/ring-app)
+build.sh
+```
+
+The adapter stays in-project until it has soaked; then it graduates to its own
+library.
 
 ## Prerequisites
 
-The jolt toolchain (see the [greeter example](../greeter/README.md)) and
-[spork](https://github.com/janet-lang/spork) for the HTTP server, declared
-in `deps.edn` as a `:jpm/module` dependency — `jolt-deps` verifies it's
-importable and runs `jpm install spork` for you when it isn't.
+[Janet](https://janet-lang.org) and `jpm`, plus the `jolt` and `jolt-deps`
+binaries:
+
+```bash
+git clone https://github.com/jolt-lang/jolt.git
+cd jolt && git submodule update --init && jpm build
+export PATH="$PWD/build:$PATH"
+```
+
+The HTTP server is spork/http, declared in `deps.edn` as a `:jpm/module`
+dependency — `jolt-deps` verifies it's importable and runs `jpm install spork`
+for you when it isn't.
 
 Note: `jpm install spork` needs an up-to-date jpm (spork HEAD declares
 `.janet` native sources, which older jpm — including Homebrew's current
@@ -25,23 +47,46 @@ PREFIX=/opt/homebrew janet bootstrap.janet`).
 ## Run
 
 ```bash
-jolt-deps run -m app.core            # listens on :3000
+jolt-deps run -m app.core            # listens on config.edn's :port (3000)
+PORT=8080 jolt-deps run -m app.core  # config.core/env: env beats config.edn
 curl 'http://127.0.0.1:3000/?name=Jolt'
 curl -d 'a=1&b=2' http://127.0.0.1:3000/echo
 ```
 
+`GET /` renders `resources/templates/index.html` through Selmer —
+`{{name|upper}}`, an `{% if %}` motd, and a `{% for %}` feature list — with
+the name from `?name=` query params (ring's `wrap-params` +
+`wrap-keyword-params`) falling back to `config.edn`.
+
 ## Tests
 
 ```bash
-jolt-deps -M:test    # pure middleware checks + a live end-to-end round trip
+jolt-deps -M:test    # template, middleware, config, and a live round trip
 ```
 
-## What works
+## Native executable
 
-- `ring.middleware.params` / `ring.middleware.keyword-params` from ring-core,
-  resolved as a `:deps/root` git dependency (ring is a monorepo).
-- `ring.util.codec` (ring-codec) on jolt's java.net/java.util shims:
-  URLEncoder/URLDecoder, Base64, StringTokenizer, MapEntry.
-- The Ring SPEC request map (`:uri`, `:query-string`, `:request-method`,
-  lowercase `:headers`, `:body`) and response map (`:status`, `:headers`,
-  string/seq `:body`).
+```bash
+./build.sh           # -> build/ring-app  (jolt context baked at build time)
+PORT=8080 ./build/ring-app
+./build/ring-app nrepl 7888   # the same binary can host an nREPL
+```
+
+## REPL
+
+```bash
+jolt-deps repl
+```
+
+```clojure
+user=> (require '[app.core :as app])
+user=> (subs (app/render-index {:name "repl"} {}) 0 60)
+user=> (app/-main "8090")   ; serve from the REPL
+```
+
+## Divergence notes
+
+- Ring's `:body` is a `StringReader` shim rather than a `java.io.InputStream`
+  — `(slurp (:body req))` drains it, which is what ring middleware and most
+  handlers do with it.
+- Response bodies: strings and (eager) seqs; no streams on this host.

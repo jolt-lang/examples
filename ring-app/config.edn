@@ -1,0 +1,8 @@
+{:port 3000
+ :name "Jolt"
+ :motd "ring-core + Selmer + config, all from deps.edn, served by spork/http"
+ :features ["ring middleware (params, keyword-params)"
+            "Selmer HTML templates"
+            "yogthos/config (PORT env overrides :port)"
+            "an nREPL you can connect an editor to"
+            "a native executable build"]}
