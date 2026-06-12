@@ -19,6 +19,16 @@
         com.github.seancorfield/honeysql
           {:git/url "https://github.com/seancorfield/honeysql"
            :git/sha "726f899cb90514b153cef2dc657695a85883d16e"}
+        ;; reitit routing — needs JOLT_FEATURES including "clj" (set in tasks /
+        ;; build.sh) so reitit reads its :clj branches; jolt-lang/router
+        ;; mirrors the reitit.Trie Java class.
+        metosin/reitit-core {:git/url "https://github.com/metosin/reitit"
+                             :git/sha "5d5c965deb3c7c8d64b8dd636432eaa14f0324ec"
+                             :deps/root "modules/reitit-core"}
+        weavejester/meta-merge {:git/url "https://github.com/weavejester/meta-merge"
+                                :git/sha "c968c38baccd4219fe0ba592d89af37ea8e426bf"}
+        jolt-lang/router {:git/url "https://github.com/jolt-lang/router"
+                          :git/sha "d35a08560fd2b84faa5e4e1de3f0fb59fa6ce90f"}
         ;; janet-side dependency: the HTTP server. jolt-deps verifies the jpm
         ;; module is importable (running `jpm install spork` once if not) and
         ;; the janet.* bridge autoloads it at first janet.spork.http/* use.
