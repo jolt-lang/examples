@@ -1,5 +1,6 @@
 (ns app.core-test
   (:require [app.core :as core]
+            [app.db :as db]
             [ring-janet.adapter :as adapter]
             [clojure.string :as str]
             [jolt.http :as http]))
@@ -46,6 +47,23 @@
 
   (println "config")
   (check "config.edn supplies the port" 3000 (:port config.core/env))
+
+  (println "guestbook — sqlite via jdbc.core + honeysql")
+  (reset! core/conn (db/connect ":memory:"))
+  (check "empty guestbook" 0 (db/greeting-count @core/conn))
+  (check "add-greeting! returns id" 1 (db/add-greeting! @core/conn "ada"))
+  (db/add-greeting! @core/conn "grace")
+  (check "count" 2 (db/greeting-count @core/conn))
+  (check "recent order (newest first)" ["grace" "ada"]
+         (mapv :name (db/recent-greetings @core/conn 10)))
+  (check "sign route inserts + redirects" 303
+         (:status (core/app {:request-method :post :uri "/sign" :query-string nil
+                             :headers {"content-type" "application/x-www-form-urlencoded"}
+                             :body (StringReader. "name=alan")})))
+  (check "signed" 3 (db/greeting-count @core/conn))
+  (check-has "page shows the signatures" "<li>alan"
+             (:body (core/app {:request-method :get :uri "/" :query-string nil
+                               :headers {}})))
 
   (println "end-to-end — live server on the event loop")
   (let [server (adapter/run-server core/app {:port 8377})

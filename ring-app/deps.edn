@@ -14,6 +14,11 @@
         jolt-lang/ring-janet-adapter
           {:git/url "https://github.com/jolt-lang/ring-janet-adapter"
            :git/sha "5b6164b8b4d608dfe2f7a9144117b6f5454ebf41"}
+        jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
+                      :git/sha "cd802749e4d45d4b860e5cef2c8ae0f8c6de63eb"}
+        com.github.seancorfield/honeysql
+          {:git/url "https://github.com/seancorfield/honeysql"
+           :git/sha "726f899cb90514b153cef2dc657695a85883d16e"}
         ;; janet-side dependency: the HTTP server. jolt-deps verifies the jpm
         ;; module is importable (running `jpm install spork` once if not) and
         ;; the janet.* bridge autoloads it at first janet.spork.http/* use.
