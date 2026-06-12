@@ -13,15 +13,15 @@ deps.edn                       ring-core (:deps/root), ring-codec, Selmer,
                                config, and spork/http as a :jpm/module dep
 config.edn                     runtime config — :port, greeting content
 resources/templates/index.html the Selmer HTML template
-src/ring_janet/adapter.clj     the Ring <-> spork/http adapter
 src/app/core.clj               handler + middleware stack + -main
 test/                          render, middleware, config, and live-server checks
 main.janet / project.janet /   native-executable build (build/ring-app)
 build.sh
 ```
 
-The adapter stays in-project until it has soaked; then it graduates to its own
-library.
+The Ring <-> spork/http adapter graduated to its own library,
+[ring-janet-adapter](https://github.com/jolt-lang/ring-janet-adapter), pulled
+in as an ordinary git dependency.
 
 ## Prerequisites
 
@@ -86,7 +86,5 @@ user=> (app/-main "8090")   ; serve from the REPL
 
 ## Divergence notes
 
-- Ring's `:body` is a `StringReader` shim rather than a `java.io.InputStream`
-  — `(slurp (:body req))` drains it, which is what ring middleware and most
-  handlers do with it.
-- Response bodies: strings and (eager) seqs; no streams on this host.
+See the [adapter README](https://github.com/jolt-lang/ring-janet-adapter)
+(:body is a StringReader shim, response bodies are strings/eager seqs).
