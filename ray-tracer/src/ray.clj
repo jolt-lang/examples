@@ -21,9 +21,9 @@
 (defn degrees->radians [deg]
   (/ (* deg pi) 180.0))
 
-(defn sqrt [n] (Math/sqrt n))
-(defn tan [n] (Math/tan n))
-(defn pow [l r] (Math/pow l r))
+(defn sqrt [n] (clojure.math/sqrt n))
+(defn tan [n] (clojure.math/tan n))
+(defn pow [l r] (clojure.math/pow l r))
 
 (defn vec3-create [r g b]
   {:r r

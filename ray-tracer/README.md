@@ -36,7 +36,13 @@ Apple M1 Max, same source, mean of timed runs after warmup:
 | jank 0.1-alpha, `-O3 -Odirect-call` | 1.08 s | 0.8× |
 | Clojure JVM 1.12 | 1.40 s | 1.0× |
 | jank 0.1-alpha, no flags | 14.5 s | 10× |
-| jolt (compile mode) | 165.6 s | 118× |
+| jolt (compile mode) | 15.8 s | 11× |
+
+jolt's first run of this benchmark took 165.6 s (118× JVM). The profile it
+produced drove a round of runtime optimizations (jolt PR #91 — inlined
+keyword lookup, inlined map-literal construction, `clojure.math` backed by
+Janet natives, indexed reduce) that mirror jank's own optimization series,
+for a 10.5× improvement. Needs a jolt built after that PR.
 
 (The blog post reports jank 2.37 s vs Clojure 2.53 s on the author's
 machine — same ranking as the optimized rows here. jank's `jank.perf`
@@ -46,19 +52,23 @@ same `time`-loop protocol.)
 ## Why, concretely
 
 Micro-benchmarks of this workload's hot operations on jolt (compiled
-`loop/recur`, ns/iteration; empty loop ≈ 27 ns):
+`loop/recur`, ns/iteration; empty loop ≈ 27 ns), before and after the
+optimization round this benchmark drove:
 
-| op | cost | jank's fix for the same cost |
-|---|---|---|
-| `{:r 1.5 :g 2.5 :b 3.5}` | ~890 ns | NaN boxing (allocation-free doubles) |
-| `(:r v)` | ~930 ns | inlined keyword map lookup |
-| `(Math/sqrt x)` via wrapper defn | ~5,000 ns | n/a — jolt interop heads always interpret |
+| op | before | after | jank's analogous fix |
+|---|---|---|---|
+| `(:r v)` | ~930 ns | ~90 ns | inlined keyword map lookup |
+| `{:r 1.5 :g 2.5 :b 3.5}` | ~890 ns | ~250 ns | NaN boxing / call-free construction |
+| `sqrt` | ~5,000 ns (`Math/` interop) | ~30 ns (`clojure.math`) | native math |
 
-The three costs map one-to-one onto the jank post's profiling result
-(map creation, keyword lookup, arithmetic/dispatch). The extra one is
-jolt-specific: `.`/`Math/` interop forms are in the compiler's frozen punt
-set, so every `sqrt`/`tan`/`pow` call drops into the tree-walking
-interpreter — and this scene computes square roots in every bounce. A
-compiled fast path for host math (or a `clojure.math` namespace backed by
-Janet's `math/` natives) is the cheapest single win this benchmark
-suggests, before the deeper object-model work.
+The costs map one-to-one onto the jank post's profiling result (map
+creation, keyword lookup, arithmetic/dispatch). `Math/sqrt`-style interop
+forms remain in the compiler's frozen interpret-only punt set — the port
+uses `clojure.math` (Clojure 1.11), which jolt backs directly with Janet's
+math natives so calls compile and direct-link.
+
+The remaining ~11× over the JVM is the floor of the current object model:
+a Janet struct allocation per vec3 op and a guard-plus-opcode-get per
+keyword access, where the JVM JIT escapes most of the allocations
+entirely. Closing that gap is jank-style object-model work (jolt-4vr has
+the notes).
