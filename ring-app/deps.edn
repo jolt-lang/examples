@@ -4,7 +4,12 @@
                         :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
                         :deps/root "ring-core"}
         ring/ring-codec {:git/url "https://github.com/ring-clojure/ring-codec"
-                         :git/sha "1b2bdf11bcd057720141124e5f33c6f3e2a46790"}}
+                         :git/sha "1b2bdf11bcd057720141124e5f33c6f3e2a46790"}
+        ;; janet-side dependency: the HTTP server. jolt-deps verifies the jpm
+        ;; module is importable (running `jpm install spork` once if not) and
+        ;; the janet.* bridge autoloads it at first janet.spork.http/* use.
+        janet/spork-http {:jpm/module "spork/http"
+                          :jpm/install "spork"}}
 
  :aliases {:nrepl {:main-opts ["nrepl-server"]}
            :test  {:extra-paths ["test"]

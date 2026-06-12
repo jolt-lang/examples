@@ -11,11 +11,16 @@ its own library once it has soaked.
 
 ## Prerequisites
 
-The jolt toolchain (see the [greeter example](../greeter/README.md)).
-Nothing else: the HTTP server is [spork/http](https://janet-lang.org/spork/api/http.html),
-which jolt vendors and bakes into its binary (`vendor/spork/http.janet` in
-the jolt repo) — `jpm install spork` is NOT required (and currently fails
-against spork HEAD: its gfx2d native-module declaration trips newer jpm).
+The jolt toolchain (see the [greeter example](../greeter/README.md)) and
+[spork](https://github.com/janet-lang/spork) for the HTTP server, declared
+in `deps.edn` as a `:jpm/module` dependency — `jolt-deps` verifies it's
+importable and runs `jpm install spork` for you when it isn't.
+
+Note: `jpm install spork` needs an up-to-date jpm (spork HEAD declares
+`.janet` native sources, which older jpm — including Homebrew's current
+bundle — rejects with an "unknown source file type" error; upgrade jpm from
+git: `git clone https://github.com/janet-lang/jpm && cd jpm &&
+PREFIX=/opt/homebrew janet bootstrap.janet`).
 
 ## Run
 
