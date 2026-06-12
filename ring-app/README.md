@@ -1,17 +1,21 @@
 # ring-app
 
 The Jolt example app: [Ring](https://github.com/ring-clojure/ring) middleware,
-[Selmer](https://github.com/yogthos/Selmer) HTML templates, and
-[yogthos/config](https://github.com/yogthos/config) — all loaded straight from
-their git repos via `deps.edn` (no forks, no patches) — served by a small Ring
-adapter (`ring-janet.adapter`) over
+[Selmer](https://github.com/yogthos/Selmer) HTML templates,
+[yogthos/config](https://github.com/yogthos/config), and a SQLite guestbook
+through [jolt-lang/db](https://github.com/jolt-lang/db)'s `jdbc.core` with
+queries written as [honeysql](https://github.com/seancorfield/honeysql) data —
+every library loaded straight from its git repo via `deps.edn` (no forks, no
+patches) — served by
+[ring-janet-adapter](https://github.com/jolt-lang/ring-janet-adapter) over
 [spork/http](https://janet-lang.org/spork/api/http.html), Janet's HTTP server,
 through jolt's `janet.*` interop bridge.
 
 ```
 deps.edn                       ring-core (:deps/root), ring-codec, Selmer,
                                config, and spork/http as a :jpm/module dep
-config.edn                     runtime config — :port, greeting content
+config.edn                     runtime config — :port, :database-url, content
+src/app/db.clj                 guestbook storage: jdbc.core + honeysql
 resources/templates/index.html the Selmer HTML template
 src/app/core.clj               handler + middleware stack + -main
 test/                          render, middleware, config, and live-server checks
@@ -56,7 +60,10 @@ curl -d 'a=1&b=2' http://127.0.0.1:3000/echo
 `GET /` renders `resources/templates/index.html` through Selmer —
 `{{name|upper}}`, an `{% if %}` motd, and a `{% for %}` feature list — with
 the name from `?name=` query params (ring's `wrap-params` +
-`wrap-keyword-params`) falling back to `config.edn`.
+`wrap-keyword-params`) falling back to `config.edn`. The guestbook form
+POSTs `/sign`, which inserts into SQLite through `jdbc.core` with a honeysql
+query and redirects home; the page lists recent signatures the same way.
+`DATABASE_URL` (or `:database-url` in config.edn) picks the database file.
 
 ## Tests
 
