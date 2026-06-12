@@ -2,7 +2,7 @@
 
 The Jolt example app: [Ring](https://github.com/ring-clojure/ring) middleware,
 [Selmer](https://github.com/yogthos/Selmer) HTML templates,
-[yogthos/config](https://github.com/yogthos/config), and a SQLite guestbook
+[yogthos/config](https://github.com/yogthos/config), and [reitit](https://github.com/metosin/reitit) routing, and a SQLite guestbook
 through [jolt-lang/db](https://github.com/jolt-lang/db)'s `jdbc.core` with
 queries written as [honeysql](https://github.com/seancorfield/honeysql) data —
 every library loaded straight from its git repo via `deps.edn` (no forks, no
@@ -17,7 +17,7 @@ deps.edn                       ring-core (:deps/root), ring-codec, Selmer,
 config.edn                     runtime config — :port, :database-url, content
 src/app/db.clj                 guestbook storage: jdbc.core + honeysql
 resources/templates/index.html the Selmer HTML template
-src/app/core.clj               handler + middleware stack + -main
+src/app/core.clj               reitit router + handlers + -main
 test/                          render, middleware, config, and live-server checks
 main.janet / project.janet /   native-executable build (build/ring-app)
 build.sh
@@ -90,6 +90,24 @@ user=> (require '[app.core :as app])
 user=> (subs (app/render-index {:name "repl"} {}) 0 60)
 user=> (app/-main "8090")   ; serve from the REPL
 ```
+
+## Routing
+
+Routes are a [reitit](https://github.com/metosin/reitit) data-driven router
+(`src/app/core.clj`). reitit-core needs its `:clj` reader branches and its
+`reitit.Trie` Java class; jolt-lang/router mirrors the trie in Clojure, and
+`app.core` loads reitit under `:clj` reader features *scoped to that one
+require* (the other libraries stay on jolt's default feature set):
+
+```clojure
+(let [prev (__reader-features)]
+  (__reader-features-set! ["clj" "jolt" "default"])
+  (require (quote [reitit.trie-jolt]) (quote [reitit.core :as reitit]))
+  (__reader-features-set! prev))
+```
+
+`GET /greetings/:name` shows a path-param route; `/`, `/sign`, `/echo`
+are static.
 
 ## Divergence notes
 

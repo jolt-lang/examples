@@ -39,6 +39,13 @@
              "Hello WEB!"
              (:body (core/app {:request-method :get :uri "/" :query-string "name=web"
                                :headers {}})))
+  (check-has "reitit path param route"
+             "Hello Alice!"
+             (:body (core/app {:request-method :get :uri "/greetings/Alice"
+                               :query-string nil :headers {}})))
+  (check "reitit 404 for unknown path" 404
+         (:status (core/app {:request-method :get :uri "/nope"
+                             :query-string nil :headers {}})))
   (check "form body params"
          "{:a \"1\", :b \"2\"}"
          (:body (core/app {:request-method :post :uri "/echo" :query-string nil
