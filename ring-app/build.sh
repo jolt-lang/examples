@@ -1,8 +1,8 @@
 #!/bin/sh
-# Build a self-contained native executable at build/greeter.
+# Build a self-contained native executable at build/ring-app.
 #
 # Resolves the deps.edn dependencies with jolt-deps, then lets jpm bake a Jolt
-# context with greeter.core + Selmer + config preloaded into a binary (see
+# context with ring-app.core + Selmer + config preloaded into a binary (see
 # main.janet). Needs: janet + jpm, the jolt + jolt-deps binaries on PATH, and
 # a jolt source checkout (JOLT_REPO, default ../../jolt).
 set -e
@@ -19,4 +19,4 @@ export JOLT_PATH="$(jolt-deps path)"
 # --modpath puts jolt's source on jpm's module path so main.janet can
 # (import jolt/api) at build time.
 jpm --modpath="$(cd "$JOLT_REPO/src" && pwd)" build
-echo "Built build/greeter"
+echo "Built build/ring-app"

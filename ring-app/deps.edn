@@ -1,0 +1,27 @@
+{:paths ["src" "resources"]
+
+ ;; Git deps are fetched into a global cache (~/.jolt/gitlibs) by jolt-deps.
+ ;; Pin full SHAs — `git fetch` can't resolve short ones.
+ :deps {ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
+                        :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
+                        :deps/root "ring-core"}
+        ring/ring-codec {:git/url "https://github.com/ring-clojure/ring-codec"
+                         :git/sha "1b2bdf11bcd057720141124e5f33c6f3e2a46790"}
+        yogthos/config {:git/url "https://github.com/yogthos/config"
+                        :git/sha "e9076ad18fce0b24c72d317dd23c43766dd95c8c"}
+        yogthos/selmer {:git/url "https://github.com/yogthos/Selmer"
+                        :git/sha "fa4a42e77b48905f87b3bf0dc1c698f2c329c722"}
+        ;; janet-side dependency: the HTTP server. jolt-deps verifies the jpm
+        ;; module is importable (running `jpm install spork` once if not) and
+        ;; the janet.* bridge autoloads it at first janet.spork.http/* use.
+        janet/spork-http {:jpm/module "spork/http"
+                          :jpm/install "spork"}}
+
+ :aliases {:nrepl {:main-opts ["nrepl-server"]}
+           :test  {:extra-paths ["test"]
+                   :main-opts ["-m" "app.core-test"]}}
+
+ :tasks {run        {:doc "run the server" :main-opts ["-m" "app.core"]}
+         test       "jolt-deps -M:test"
+         uberscript "mkdir -p target && jolt-deps uberscript target/ring-app.clj -m app.core"
+         build      "./build.sh"}}

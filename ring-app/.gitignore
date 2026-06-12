@@ -1,4 +1,5 @@
+jpm_tree/
+.cpcache/
 build/
 target/
-.cpcache/
 .nrepl-port
