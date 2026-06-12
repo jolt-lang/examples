@@ -16,6 +16,11 @@ fi
 
 export JOLT_REPO
 export JOLT_PATH="$(jolt-deps path)"
+# The bake snapshots whatever env-reading libraries capture at load (config!)
+# INTO THE BINARY — scrub everything but what the build itself needs, so no
+# tokens from the build machine can end up in a distributed executable
+# (jolt-lang/jolt jolt-s3j).
+export JOLT_BAKE_ENV_ALLOWLIST="PATH,HOME,TMPDIR,JOLT_REPO,JOLT_PATH,JANET_PATH,PORT"
 # --modpath puts jolt's source on jpm's module path so main.janet can
 # (import jolt/api) at build time.
 jpm --modpath="$(cd "$JOLT_REPO/src" && pwd)" build

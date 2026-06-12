@@ -11,6 +11,9 @@
                         :git/sha "e9076ad18fce0b24c72d317dd23c43766dd95c8c"}
         yogthos/selmer {:git/url "https://github.com/yogthos/Selmer"
                         :git/sha "fa4a42e77b48905f87b3bf0dc1c698f2c329c722"}
+        jolt-lang/ring-janet-adapter
+          {:git/url "https://github.com/jolt-lang/ring-janet-adapter"
+           :git/sha "5b6164b8b4d608dfe2f7a9144117b6f5454ebf41"}
         ;; janet-side dependency: the HTTP server. jolt-deps verifies the jpm
         ;; module is importable (running `jpm install spork` once if not) and
         ;; the janet.* bridge autoloads it at first janet.spork.http/* use.
