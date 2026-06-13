@@ -29,20 +29,25 @@ within sampling noise.
 
 ## Where jolt stands
 
-Apple M1 Max, same source, mean of timed runs after warmup:
+Apple M1 Max, same source, clean serial runs, mean of timed runs after
+warmup (one measurement session, so the ratios are apples-to-apples):
 
 | runtime | per render | vs JVM |
 |---|---|---|
-| jank 0.1-alpha, `-O3 -Odirect-call` | 1.08 s | 0.8× |
-| Clojure JVM 1.12 | 1.40 s | 1.0× |
-| jank 0.1-alpha, no flags | 14.5 s | 10× |
-| jolt (compile mode) | 15.8 s | 11× |
+| jank 0.1-alpha, `-O3 -Odirect-call` | 1.17 s | 0.8× |
+| Clojure JVM 1.12 | 1.44 s | 1.0× |
+| **jolt, `JOLT_DIRECT_LINK=1`** (RFC 0005 specialization) | **12.3 s** | **8.5×** |
+| jank 0.1-alpha, no flags | 15.2 s | 11× |
+| jolt, default compile mode | 17.3 s | 12× |
 
-jolt's first run of this benchmark took 165.6 s (118× JVM). The profile it
-produced drove a round of runtime optimizations (jolt PR #91 — inlined
-keyword lookup, inlined map-literal construction, `clojure.math` backed by
-Janet natives, indexed reduce) that mirror jank's own optimization series,
-for a 10.5× improvement. Needs a jolt built after that PR.
+jolt's first run of this benchmark took 165.6 s (118× JVM). Two rounds of
+work brought it down: PR #91 (inlined keyword lookup, inlined map-literal
+construction, `clojure.math` backed by Janet natives, indexed reduce) got
+the default path to ~17 s, and RFC 0005 structural type inference —
+enabled with `JOLT_DIRECT_LINK=1` — drops the per-lookup dynamic guard
+where a map's shape is proven, taking it to **12.3 s**. That now beats
+jank's own unoptimized default mode; the remaining gap is to the fully
+optimized AOT/JIT competitors.
 
 (The blog post reports jank 2.37 s vs Clojure 2.53 s on the author's
 machine — same ranking as the optimized rows here. jank's `jank.perf`
@@ -67,8 +72,12 @@ forms remain in the compiler's frozen interpret-only punt set — the port
 uses `clojure.math` (Clojure 1.11), which jolt backs directly with Janet's
 math natives so calls compile and direct-link.
 
-The remaining ~11× over the JVM is the floor of the current object model:
-a Janet struct allocation per vec3 op and a guard-plus-opcode-get per
-keyword access, where the JVM JIT escapes most of the allocations
-entirely. Closing that gap is jank-style object-model work (jolt-4vr has
-the notes).
+The remaining ~8.5× over the JVM (and ~10× over jank's optimized AOT) is
+the floor of two things: a Janet struct allocation per vec3 op, where the
+JVM JIT and jank's NaN-boxed AOT escape most allocations entirely; and a
+bytecode interpreter executing the inner loop, where both competitors run
+native code. RFC 0005's inference already removes the per-lookup guard
+where a shape is proven; closing more needs jank-style object-model work
+(scalar replacement of provably-dead allocations, hidden-class layouts —
+jolt-4vr has the notes), and the interpreter-vs-native gap is a hard floor
+short of a native backend.
