@@ -1,1 +1,4 @@
-{:paths ["src"]}
+{:paths ["src"]
+ :aliases
+ {:baseline {:main-opts ["-m" "ray-baseline"]}
+  :typed    {:main-opts ["-m" "ray-typed"]}}}
