@@ -115,9 +115,12 @@
 (defn rand-color []
   (rand-nth colors))
 
+;; Container records carry ^Vec3 field hints (jolt-3ko) so reading a vec back out
+;; of a ray/hit keeps its Vec3 type — that's what lets the vec ops on field-read
+;; values prove their reads (bare-index) under whole-program optimization.
+(defrecord Ray [^Vec3 origin ^Vec3 direction])
 (defn ray-create [origin direction]
-  {:origin origin
-   :direction direction})
+  (->Ray origin direction))
 (defn ray-at [r t]
   (vec3-add (:origin r) (vec3-scale (:direction r) t)))
 
@@ -128,12 +131,9 @@
     (* (+ r2 (- 1.0 r2))
        (pow (- 1.0 cosine) 5.0))))
 
+(defrecord HitInfo [^Vec3 point ^Vec3 normal t material front-face?])
 (defn hit-info-create [point normal t material front-face?]
-  {:point point
-   :normal normal
-   :t t
-   :material material
-   :front-face? front-face?})
+  (->HitInfo point normal t material front-face?))
 
 (defn hit-sphere [hittable t-min t-max ray]
   (let [center (:center hittable)
