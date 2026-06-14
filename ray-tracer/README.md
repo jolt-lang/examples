@@ -101,8 +101,23 @@ variant is the next step the records pivot opened: a fixed-shape record removes
 the per-op map machinery the inference could only partly hide, and the protocol
 materials remove the closure-in-a-map dispatch entirely.
 
+The hot per-op costs the records variant builds on (jolt micro-benchmarks,
+before/after the PR #91 optimization round this benchmark drove):
+
+| op | before | after | jank's analogous fix |
+|---|---|---|---|
+| `(:r v)` | ~930 ns | ~90 ns | inlined keyword map lookup |
+| `{:r 1.5 :g 2.5 :b 3.5}` | ~890 ns | ~250 ns | NaN boxing / call-free construction |
+| `sqrt` | ~5,000 ns (`Math/` interop) | ~30 ns (`clojure.math`) | native math |
+
+Records are the next step past those: a fixed shape stores the keys once and
+the values in declared order, so a field read is an index access and
+construction is flat — exactly the shape-based-aggregate route the all-maps
+version could only point at.
+
 What records do *not* fix here: a sphere `:center` is read from a `reduce`-
 iterated world list, so without vector-element-type tracking through fn
 boundaries it stays `:any`, and the shared vec ops widen accordingly — which is
 why the win is 2.65× and not larger. Closing that needs element-type
-propagation through calls (tracked separately).
+propagation through calls (tracked separately). See `../ray-tracer-multi` for
+the namespace-boundary version and how `^RecordType` param hints recover it.
