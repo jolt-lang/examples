@@ -9,6 +9,7 @@
   are switched to :clj only for that load, then restored. The app runs under
   default features."
   (:require [config.core :as config]
+            [clojure.tools.logging :as log]
             [selmer.parser :as selmer]
             [clojure.java.io :as io]
             [ring.middleware.params :refer [wrap-params]]
@@ -65,8 +66,14 @@
       {:status 405 :headers {"Content-Type" "text/plain"} :body "method not allowed\n"})
     {:status 404 :headers {"Content-Type" "text/plain"} :body "not found\n"}))
 
+(defn wrap-log [handler]
+  (fn [{:keys [request-method uri] :as request}]
+    (let [response (handler request)]
+      (log/info request-method uri "->" (:status response))
+      response)))
+
 (def app
-  (-> handler wrap-keyword-params wrap-params))
+  (-> handler wrap-keyword-params wrap-params wrap-log))
 
 (defn -main [& args]
   (config/reload-env)
@@ -74,7 +81,7 @@
         db-path (:database-url config/env "guestbook.sqlite3")
         server (adapter/run-server app {:port port})]
     (reset! conn (db/connect db-path))
-    (println (str "ring-app listening on http://127.0.0.1:" port " (guestbook: " db-path ")"))
-    (println "PORT / DATABASE_URL env override config.edn")
+    (log/info (str "ring-app listening on http://127.0.0.1:" port) "— guestbook:" db-path)
+    (log/info "PORT / DATABASE_URL override config.edn")
     (janet.ev/sleep 1000000000)
     server))
