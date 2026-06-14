@@ -1,9 +1,15 @@
-(ns ray)
+(ns ray-typed)
 
-;; jank's ray tracer benchmark (gist.github.com/jeaye/6312e8f951c9564866a246fdd4dca835,
-;; from "Ray Tracing in One Weekend"), adapted for jolt: the #?(:clj/:jank)
-;; reader conditionals collapse to jolt's Math/ host shims and the
-;; criterium/jank.perf harness becomes a plain wall-clock loop.
+;; Fully-typed variant of the ray tracer (jolt-3ko / records pivot). Every data
+;; structure is a defrecord with a fixed, declared shape — vectors, rays, hits,
+;; spheres, the scatter result, and the three materials. Materials sit behind a
+;; Scatter protocol instead of a map carrying a `:scatter` closure, so dispatch
+;; is a real protocol call (devirtualizable on a proven receiver) and the hot
+;; vec math inside each scatter impl reads its fields at the method's own
+;; statically-known type. Field hints (^Vec3 / ^Ray) carry the exact nested
+;; shape across fn boundaries so a vec read off a ray/hit/result stays Vec3.
+;; Compare against ray-baseline (the all-maps original) under JOLT_DIRECT_LINK=1
+;; and JOLT_WHOLE_PROGRAM=1.
 
 (defn print+space [data]
   #_(print data)
@@ -25,10 +31,6 @@
 (defn tan [n] (clojure.math/tan n))
 (defn pow [l r] (clojure.math/pow l r))
 
-;; Vec3 is a record (jolt-t34): fixed-shape data laid out in declared field order
-;; with bare-index field reads, ~cheaper construction than a map, and (under
-;; whole-program optimization) param reads proven across fn boundaries. Field
-;; access (:r v)/(:g v)/(:b v) is unchanged — records respond to keyword lookup.
 (defrecord Vec3 [r g b])
 (defn vec3-create [r g b] (->Vec3 r g b))
 (defn vec3-scale [l n]
@@ -115,14 +117,15 @@
 (defn rand-color []
   (rand-nth colors))
 
-;; Container records carry ^Vec3 field hints (jolt-3ko) so reading a vec back out
-;; of a ray/hit keeps its Vec3 type — that's what lets the vec ops on field-read
-;; values prove their reads (bare-index) under whole-program optimization.
 (defrecord Ray [^Vec3 origin ^Vec3 direction])
 (defn ray-create [origin direction]
   (->Ray origin direction))
 (defn ray-at [r t]
   (vec3-add (:origin r) (vec3-scale (:direction r) t)))
+
+;; A scatter produces a tinted bounce ray. Both fields carry their record type
+;; so ray-cast reads (:attenuation s)/(:ray s) back at Vec3/Ray, not :any.
+(defrecord ScatterResult [^Vec3 attenuation ^Ray ray])
 
 (defn reflectance [cosine ref-idx]
   (let [r (/ (- 1.0 ref-idx)
@@ -134,6 +137,62 @@
 (defrecord HitInfo [^Vec3 point ^Vec3 normal t material front-face?])
 (defn hit-info-create [point normal t material front-face?]
   (->HitInfo point normal t material front-face?))
+
+;; Materials behind a protocol: each impl's receiver is statically its own
+;; record, so (:albedo m) etc. read at Vec3 with no call-site inference. The
+;; dispatch (scatter material ...) devirtualizes wherever the material type is
+;; proven, and falls back to one indirect dispatch where it isn't (the material
+;; read off a sphere pulled from the reduce-iterated world list).
+(defprotocol Scatter
+  (scatter [m ray hit]))
+
+(defrecord Lambertian [^Vec3 albedo]
+  Scatter
+  (scatter [m ray hit]
+    (let [scatter-direction (let [dir (vec3-add (:normal hit)
+                                                (vec3-rand-unit-in-sphere))]
+                              (if (vec3-near-zero? dir)
+                                (:normal hit)
+                                dir))
+          scattered (ray-create (:point hit) scatter-direction)]
+      (->ScatterResult (:albedo m) scattered))))
+
+(defrecord Metal [^Vec3 albedo fuzz]
+  Scatter
+  (scatter [m ray hit]
+    (let [reflected (vec3-reflect (vec3-normalize (:direction ray))
+                                  (:normal hit))
+          scattered (ray-create (:point hit)
+                                (vec3-add reflected
+                                          (vec3-scale (vec3-rand-unit-in-sphere)
+                                                      (:fuzz m))))]
+      (if (< 0 (vec3-dot (:direction scattered) (:normal hit)))
+        (->ScatterResult (:albedo m) scattered)
+        nil))))
+
+(defrecord Dielectric [index-of-refraction]
+  Scatter
+  (scatter [m ray hit]
+    (let [attenuation (vec3-create 1 1 1)
+          ir (:index-of-refraction m)
+          refraction-ratio (if (:front-face? hit)
+                             (/ 1.0 ir)
+                             ir)
+          unit-direction (vec3-normalize (:direction ray))
+          normal (:normal hit)
+          cos-theta (min (vec3-dot (vec3-sub (vec3-create 0 0 0)
+                                             unit-direction)
+                                   normal)
+                         1.0)
+          sin-theta (sqrt (- 1.0 (* cos-theta cos-theta)))
+          cannot-refract? (< 1.0 (* refraction-ratio sin-theta))
+          direction (if (or cannot-refract?
+                            (< (rand) (reflectance cos-theta refraction-ratio)))
+                      (vec3-reflect unit-direction normal)
+                      (vec3-refract unit-direction normal refraction-ratio))]
+      (->ScatterResult attenuation (ray-create (:point hit) direction)))))
+
+(defrecord Sphere [^Vec3 center radius material])
 
 (defn hit-sphere [hittable t-min t-max ray]
   (let [center (:center hittable)
@@ -163,6 +222,11 @@
                              (:material hittable)
                              front-face?)))))))
 
+;; Per-pixel hit accumulator: closest hit so far + its HitInfo. A record so the
+;; reduce reads (:closest-so-far acc) at num and rebuilds via ->HitAcc instead
+;; of assoc'ing a map every step.
+(defrecord HitAcc [closest-so-far hit-info])
+
 (defn hit-all [t-min t-max ray hittables]
   (:hit-info
        (reduce (fn [acc hittable]
@@ -171,61 +235,10 @@
                                             (:closest-so-far acc)
                                             ray)]
                    (if (some? hit-info)
-                     (assoc (assoc acc :hit-info hit-info)
-                            :closest-so-far (:t hit-info))
+                     (->HitAcc (:t hit-info) hit-info)
                      acc)))
-               {:closest-so-far t-max
-                :hit-info nil}
+               (->HitAcc t-max nil)
                hittables)))
-
-(defn scatter-lambertian [ray hit-info]
-  (let [scatter-direction (let [dir (vec3-add (:normal hit-info)
-                                              (vec3-rand-unit-in-sphere))]
-                            (if (vec3-near-zero? dir)
-                              (:normal hit-info)
-                              dir))
-        scattered (ray-create (:point hit-info) scatter-direction)
-        attenuation (:albedo (:material hit-info))]
-    {:ray scattered
-     :attenuation attenuation}))
-
-(defn scatter-metal [ray hit-info]
-  (let [material (:material hit-info)
-        reflected (vec3-reflect (vec3-normalize (:direction ray))
-                                (:normal hit-info))
-        scattered (ray-create (:point hit-info)
-                              (vec3-add reflected
-                                        (vec3-scale (vec3-rand-unit-in-sphere)
-                                                    (:fuzz material))))
-        attenuation (:albedo material)
-        res {:ray scattered
-             :attenuation attenuation}]
-    (if (< 0 (vec3-dot (:direction scattered) (:normal hit-info)))
-      res
-      nil)))
-
-(defn scatter-dialetric [ray hit-info]
-  (let [material (:material hit-info)
-        attenuation (vec3-create 1 1 1)
-        index-of-refraction (:index-of-refraction material)
-        refraction-ratio (if (:front-face? hit-info)
-                           (/ 1.0 index-of-refraction)
-                           index-of-refraction)
-        unit-direction (vec3-normalize (:direction ray))
-
-        normal (:normal hit-info)
-        cos-theta (min (vec3-dot (vec3-sub (vec3-create 0 0 0)
-                                           unit-direction)
-                                 normal)
-                       1.0)
-        sin-theta (sqrt (- 1.0 (* cos-theta cos-theta)))
-        cannot-refract? (< 1.0 (* refraction-ratio sin-theta))
-        direction (if (or cannot-refract?
-                              (< (rand) (reflectance cos-theta refraction-ratio)))
-                    (vec3-reflect unit-direction normal)
-                    (vec3-refract unit-direction normal refraction-ratio))]
-    {:ray (ray-create (:point hit-info) direction)
-     :attenuation attenuation}))
 
 (defn ray-cast [r max-ray-bounces hittables]
   (if (< max-ray-bounces 0)
@@ -235,8 +248,7 @@
           hit-info (hit-all 0.001 99999999 r hittables)]
       (if (some? hit-info)
         (let [material (:material hit-info)
-              scatter-fn (:scatter material)
-              scattered (scatter-fn r hit-info)]
+              scattered (scatter material r hit-info)]
           (if (some? scattered)
             (vec3-mul (ray-cast (:ray scattered)
                                 (dec max-ray-bounces)
@@ -244,9 +256,7 @@
                       (:attenuation scattered))
             (vec3-create 0 0 0)))
         (vec3-add (vec3-scale (vec3-create 1.0 1.0 1.0) (- 1.0 t))
-                  (vec3-scale (color 246 81 29) t))
-        #_(vec3-add (vec3-scale (vec3-create (color 251) (color 131) (color 15)) (- 1.0 t))
-                  (vec3-scale (vec3-create (color 246) (color 81) (color 29)) t))))))
+                  (vec3-scale (color 246 81 29) t))))))
 
 (defn rand-scene! []
   (reduce (fn [acc i]
@@ -258,38 +268,15 @@
                                       (+ z (* 0.9 (rand))))]
               (if (< 0.9 (vec3-length (vec3-sub center (vec3-create 4 0.2 0))))
                 (conj acc (if (< choose-mat 0.8)
-                            {:center center
-                             :radius 0.2
-                             :material {:albedo (rand-color)
-                                        :scatter scatter-lambertian}}
+                            (->Sphere center 0.2 (->Lambertian (rand-color)))
                             (if (< choose-mat 0.95)
-                              {:center center
-                               :radius 0.2
-                               :material {:albedo (rand-color)
-                                          :fuzz (rand-real 0 0.5)
-                                          :scatter scatter-metal}}
-                              {:center center
-                               :radius 0.2
-                               :material {:index-of-refraction 1.5
-                                          :scatter scatter-dialetric}})))
+                              (->Sphere center 0.2 (->Metal (rand-color) (rand-real 0 0.5)))
+                              (->Sphere center 0.2 (->Dielectric 1.5)))))
                 acc)))
-          [{:center (vec3-create 0 -1000 0)
-            :radius 1000
-            :material {:albedo (color 79 71 137)
-                       :scatter scatter-lambertian}}
-           {:center (vec3-create -4 1 0)
-            :radius 1
-            :material {:albedo (color 246 81 29)
-                       :scatter scatter-lambertian}}
-           {:center (vec3-create 0 1 0)
-            :radius 1
-            :material {:index-of-refraction 1.5
-                       :scatter scatter-dialetric}}
-           {:center (vec3-create 4 1 0)
-            :radius 1
-            :material {:albedo (color 0 165 207)
-                       :fuzz 0
-                       :scatter scatter-metal}}]
+          [(->Sphere (vec3-create 0 -1000 0) 1000 (->Lambertian (color 79 71 137)))
+           (->Sphere (vec3-create -4 1 0) 1 (->Lambertian (color 246 81 29)))
+           (->Sphere (vec3-create 0 1 0) 1 (->Dielectric 1.5))
+           (->Sphere (vec3-create 4 1 0) 1 (->Metal (color 0 165 207) 0))]
           (range 0 200)))
 
 (defn ray []
