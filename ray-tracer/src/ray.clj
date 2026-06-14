@@ -25,30 +25,22 @@
 (defn tan [n] (clojure.math/tan n))
 (defn pow [l r] (clojure.math/pow l r))
 
-(defn vec3-create [r g b]
-  {:r r
-   :g g
-   :b b})
+;; Vec3 is a record (jolt-t34): fixed-shape data laid out in declared field order
+;; with bare-index field reads, ~cheaper construction than a map, and (under
+;; whole-program optimization) param reads proven across fn boundaries. Field
+;; access (:r v)/(:g v)/(:b v) is unchanged — records respond to keyword lookup.
+(defrecord Vec3 [r g b])
+(defn vec3-create [r g b] (->Vec3 r g b))
 (defn vec3-scale [l n]
-  {:r (* (:r l) n)
-   :g (* (:g l) n)
-   :b (* (:b l) n)})
+  (->Vec3 (* (:r l) n) (* (:g l) n) (* (:b l) n)))
 (defn vec3-add [l r]
-  {:r (+ (:r l) (:r r))
-   :g (+ (:g l) (:g r))
-   :b (+ (:b l) (:b r))})
+  (->Vec3 (+ (:r l) (:r r)) (+ (:g l) (:g r)) (+ (:b l) (:b r))))
 (defn vec3-sub [l r]
-  {:r (- (:r l) (:r r))
-   :g (- (:g l) (:g r))
-   :b (- (:b l) (:b r))})
+  (->Vec3 (- (:r l) (:r r)) (- (:g l) (:g r)) (- (:b l) (:b r))))
 (defn vec3-mul [l r]
-  {:r (* (:r l) (:r r))
-   :g (* (:g l) (:g r))
-   :b (* (:b l) (:b r))})
+  (->Vec3 (* (:r l) (:r r)) (* (:g l) (:g r)) (* (:b l) (:b r))))
 (defn vec3-div [l n]
-  {:r (/ (:r l) n)
-   :g (/ (:g l) n)
-   :b (/ (:b l) n)})
+  (->Vec3 (/ (:r l) n) (/ (:g l) n) (/ (:b l) n)))
 (defn vec3-length-squared [v]
   (+ (+ (* (:r v) (:r v))
         (* (:g v) (:g v)))
