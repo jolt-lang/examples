@@ -12,12 +12,11 @@ jolt-deps run -m app.core
 
 ## Status
 
-`m/validate` works across the schema vocabulary: predicates (`int?`), keyword
-schemas (`:int`, `:string`, `:keyword`), `:map` (incl. nested and `{:optional
-true}` entries), `:vector`, `:tuple`, `:enum`, `:maybe`, `:and`, and bounded
-`[:int {:min .. :max ..}]` / `[:string {:min ..}]`.
-
-`m/explain` (detailed error paths) is not yet working — tracked in beads.
+`m/validate` and `m/explain` both work across the schema vocabulary: predicates
+(`int?`), keyword schemas (`:int`, `:string`, `:keyword`), `:map` (incl. nested
+and `{:optional true}` entries), `:vector`, `:tuple`, `:enum`, `:maybe`, `:and`,
+`:or`, `:re`, and bounded `[:int {:min .. :max ..}]` / `[:string {:min ..}]`.
+`m/explain` returns the detailed error paths (and `nil` for a valid value).
 
 ## Notes
 
