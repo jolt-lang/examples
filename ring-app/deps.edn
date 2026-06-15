@@ -16,6 +16,10 @@
            :git/sha "5b6164b8b4d608dfe2f7a9144117b6f5454ebf41"}
         jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
                       :git/sha "cd802749e4d45d4b860e5cef2c8ae0f8c6de63eb"}
+        ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
+        org.clojure/tools.logging
+          {:git/url "https://github.com/jolt-lang/logging"
+           :git/sha "b4f2deb5cf9693b31fbff4f99fb46cc48691d49d"}
         com.github.seancorfield/honeysql
           {:git/url "https://github.com/seancorfield/honeysql"
            :git/sha "726f899cb90514b153cef2dc657695a85883d16e"}

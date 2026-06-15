@@ -1,0 +1,5 @@
+{:paths ["src" "shims"]
+ :deps {yogthos/markdown-clj
+        {:git/url "https://github.com/yogthos/markdown-clj"
+         :git/sha "1341b06bf04302daa15ffa49a1854eee9c8e362b"}}
+ :tasks {run {:doc "render markdown -> html" :main-opts ["-m" "app.core"]}}}
