@@ -36,12 +36,13 @@
         ;; janet-side dependency: the HTTP server. jolt verifies the jpm
         ;; module is importable (running `jpm install spork` once if not) and
         ;; the janet.* bridge autoloads it at first janet.spork.http/* use.
-        ;; spork's HEAD/v1.2.0 ships spork/gfx2d-codegen.janet, which jpm's
-        ;; declare-native rejects ("unknown source file type"), so a bare
-        ;; `jpm install spork` fails. Pin to v1.1.1, the newest tag that still
-        ;; carries spork/http without the gfx2d sources.
+        ;; Starting 2025-12-07 spork declares its gfx2d .janet files as native
+        ;; sources in project.janet, which jpm's declare-native rejects
+        ;; ("unknown source file type"), so a bare `jpm install spork` against
+        ;; HEAD fails. Pin to the last commit before that change so we still
+        ;; track recent spork/http rather than the much older v1.1.1 tag.
         janet/spork-http {:jpm/module "spork/http"
-                          :jpm/install "git::https://github.com/janet-lang/spork.git::v1.1.1"}}
+                          :jpm/install "git::https://github.com/janet-lang/spork.git::881a92a05f2093d1595ef5bceca93d22675fb0c6"}}
 
  :aliases {:nrepl {:main-opts ["nrepl-server"]}
            :test  {:extra-paths ["test"]
