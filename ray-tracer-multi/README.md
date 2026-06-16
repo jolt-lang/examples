@@ -35,10 +35,10 @@ There are two ways to give the compiler the type it can no longer infer:
 
 ```bash
 # per-namespace compile (open world) — relies on the ^RecordType param hints
-JOLT_DIRECT_LINK=1 jolt-deps -M:run 3
+JOLT_DIRECT_LINK=1 jolt -M:run 3
 
 # whole-program (closed world) — recovers the same types with or without hints
-JOLT_DIRECT_LINK=1 JOLT_WHOLE_PROGRAM=1 jolt-deps -M:run 3
+JOLT_DIRECT_LINK=1 JOLT_WHOLE_PROGRAM=1 jolt -M:run 3
 ```
 
 ## Numbers

@@ -4,7 +4,7 @@ Runs [weavejester/hiccup](https://github.com/weavejester/hiccup) on jolt to
 render HTML from Clojure data structures.
 
 ```
-jolt-deps run -m app.core
+jolt run -m app.core
 ```
 
 ## Status
