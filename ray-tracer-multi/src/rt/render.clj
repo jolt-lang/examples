@@ -1,15 +1,16 @@
 (ns rt.render
   (:require [rt.vec :as v]
             [rt.types :as t]
-            [rt.scene :as s]))
+            [rt.scene :as s]
+            [jolt.png :as png]))
 
 ;; Camera + render loop + bench harness. Calls rt.scene/ray-cast with a Ray it
 ;; constructs here — the cross-namespace call site whose argument type only
 ;; reaches ray-cast's `r` param under whole-program inference.
 
-(defn print+space [data]
-  #_(print data)
-  #_(print " "))
+(def aspect-ratio (/ 16.0 9.0))
+(def image-width 100)
+(def image-height (int (/ image-width aspect-ratio)))
 
 (defn clamp [n min max]
   (if (< n min)
@@ -22,20 +23,20 @@
   (/ (* deg pi) 180.0))
 (defn tan [n] (clojure.math/tan n))
 
-(defn vec3-print [vv samples-per-pixel]
+(defn vec3->rgb [vv samples-per-pixel]
   (let [scale (/ 1.0 samples-per-pixel)
         r (v/sqrt (* scale (:r vv)))
         g (v/sqrt (* scale (:g vv)))
         b (v/sqrt (* scale (:b vv)))]
-    (print+space (int (* 256.0 (clamp r 0.0 0.999))))
-    (print+space (int (* 256.0 (clamp g 0.0 0.999))))
-    (print+space (int (* 256.0 (clamp b 0.0 0.999))))))
+    [(int (* 256.0 (clamp r 0.0 0.999)))
+     (int (* 256.0 (clamp g 0.0 0.999)))
+     (int (* 256.0 (clamp b 0.0 0.999)))]))
 
-(defn ray []
-  (let [aspect-ratio (/ 16.0 9.0)
-        image-width 100
-        image-height (int (/ image-width aspect-ratio))
-        samples-per-pixel 2
+(defn ray
+  "Render the scene, calling (emit [r g b]) once per pixel in scan order
+  (top row first, left to right)."
+  [emit]
+  (let [samples-per-pixel 2
         max-ray-bounces 10
 
         look-from (v/vec3-create 13 2 3)
@@ -76,18 +77,30 @@
                                  (v/vec3-add acc (s/ray-cast rr max-ray-bounces hittables))))
                              (v/vec3-create 0 0 0)
                              sample-counter)]
-          (vec3-print sample samples-per-pixel))))))
+          (emit (vec3->rgb sample samples-per-pixel)))))))
+
+(def ^:private nop (fn [_] nil))
 
 (defn bench [n]
-  (dotimes [_ 2] (ray)) ; warmup
+  (dotimes [_ 2] (ray nop)) ; warmup
   (let [times (mapv (fn [_]
                       (let [t0 (System/nanoTime)]
-                        (ray)
+                        (ray nop)
                         (/ (- (System/nanoTime) t0) 1000000.0)))
                     (range n))
         mean (/ (reduce + times) n)]
     (println "runs:" (mapv (fn [tt] (/ (Math/round (* tt 10.0)) 10.0)) times))
     (println "mean:" (/ (Math/round (* mean 10.0)) 10.0) "ms")))
 
+(defn render-png
+  "Render one frame to a PNG at path (jolt.png)."
+  [path]
+  (let [img (png/image image-width image-height)]
+    (ray (fn [[r g b]] (png/put! img r g b)))
+    (png/write img image-width image-height path)
+    (println "wrote" path (str image-width "×" image-height))))
+
 (defn -main [& args]
-  (bench (if (seq args) (Integer/parseInt (first args)) 3)))
+  (if (= (first args) "render")
+    (render-png (or (second args) "render.png"))
+    (bench (if (seq args) (Integer/parseInt (first args)) 3))))
