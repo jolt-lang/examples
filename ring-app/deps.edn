@@ -1,6 +1,6 @@
 {:paths ["src" "resources"]
 
- ;; Git deps are fetched into a global cache (~/.jolt/gitlibs) by jolt-deps.
+ ;; Git deps are fetched into a global cache (~/.jolt/gitlibs) by jolt.
  ;; Pin full SHAs — `git fetch` can't resolve short ones.
  :deps {ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
                         :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
@@ -33,7 +33,7 @@
                                 :git/sha "c968c38baccd4219fe0ba592d89af37ea8e426bf"}
         jolt-lang/router {:git/url "https://github.com/jolt-lang/router"
                           :git/sha "d35a08560fd2b84faa5e4e1de3f0fb59fa6ce90f"}
-        ;; janet-side dependency: the HTTP server. jolt-deps verifies the jpm
+        ;; janet-side dependency: the HTTP server. jolt verifies the jpm
         ;; module is importable (running `jpm install spork` once if not) and
         ;; the janet.* bridge autoloads it at first janet.spork.http/* use.
         janet/spork-http {:jpm/module "spork/http"
@@ -44,6 +44,6 @@
                    :main-opts ["-m" "app.core-test"]}}
 
  :tasks {run        {:doc "run the server" :main-opts ["-m" "app.core"]}
-         test       "jolt-deps -M:test"
-         uberscript "mkdir -p target && jolt-deps uberscript target/ring-app.clj -m app.core"
+         test       "jolt -M:test"
+         uberscript "mkdir -p target && jolt uberscript target/ring-app.clj -m app.core"
          build      "./build.sh"}}

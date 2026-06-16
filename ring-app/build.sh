@@ -1,9 +1,9 @@
 #!/bin/sh
 # Build a self-contained native executable at build/ring-app.
 #
-# Resolves the deps.edn dependencies with jolt-deps, then lets jpm bake a Jolt
+# Resolves the deps.edn dependencies with jolt, then lets jpm bake a Jolt
 # context with ring-app.core + Selmer + config preloaded into a binary (see
-# main.janet). Needs: janet + jpm, the jolt + jolt-deps binaries on PATH, and
+# main.janet). Needs: janet + jpm, the jolt binary on PATH, and
 # a jolt source checkout (JOLT_REPO, default ../../jolt).
 set -e
 cd "$(dirname "$0")"
@@ -15,7 +15,7 @@ if [ ! -f "$JOLT_REPO/src/jolt/api.janet" ]; then
 fi
 
 export JOLT_REPO
-export JOLT_PATH="$(jolt-deps path)"
+export JOLT_PATH="$(jolt path)"
 # The bake snapshots whatever env-reading libraries capture at load (config!)
 # INTO THE BINARY — scrub everything but what the build itself needs, so no
 # tokens from the build machine can end up in a distributed executable

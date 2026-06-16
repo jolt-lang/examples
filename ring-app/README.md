@@ -29,8 +29,7 @@ in as an ordinary git dependency.
 
 ## Prerequisites
 
-[Janet](https://janet-lang.org) and `jpm`, plus the `jolt` and `jolt-deps`
-binaries:
+[Janet](https://janet-lang.org) and `jpm`, plus the `jolt` binary:
 
 ```bash
 git clone https://github.com/jolt-lang/jolt.git
@@ -39,7 +38,7 @@ export PATH="$PWD/build:$PATH"
 ```
 
 The HTTP server is spork/http, declared in `deps.edn` as a `:jpm/module`
-dependency — `jolt-deps` verifies it's importable and runs `jpm install spork`
+dependency — `jolt` verifies it's importable and runs `jpm install spork`
 for you when it isn't.
 
 Note: `jpm install spork` needs an up-to-date jpm (spork HEAD declares
@@ -51,8 +50,8 @@ PREFIX=/opt/homebrew janet bootstrap.janet`).
 ## Run
 
 ```bash
-jolt-deps run -m app.core            # listens on config.edn's :port (3000)
-PORT=8080 jolt-deps run -m app.core  # config.core/env: env beats config.edn
+jolt run -m app.core            # listens on config.edn's :port (3000)
+PORT=8080 jolt run -m app.core  # config.core/env: env beats config.edn
 curl 'http://127.0.0.1:3000/?name=Jolt'
 curl -d 'a=1&b=2' http://127.0.0.1:3000/echo
 ```
@@ -68,7 +67,7 @@ query and redirects home; the page lists recent signatures the same way.
 ## Tests
 
 ```bash
-jolt-deps -M:test    # template, middleware, config, and a live round trip
+jolt -M:test    # template, middleware, config, and a live round trip
 ```
 
 ## Native executable
@@ -82,13 +81,20 @@ PORT=8080 ./build/ring-app
 ## REPL
 
 ```bash
-jolt-deps repl
+jolt repl
 ```
 
 ```clojure
 user=> (require '[app.core :as app])
 user=> (subs (app/render-index {:name "repl"} {}) 0 60)
 user=> (app/-main "8090")   ; serve from the REPL
+```
+
+For an editor-connected nREPL, the `:nrepl` alias starts a server with the app
+and its deps on the path (writes `.nrepl-port` for CIDER/Calva to auto-connect):
+
+```bash
+jolt -M:nrepl        # or: jolt nrepl-server  (auto-resolves deps.edn)
 ```
 
 ## Routing
