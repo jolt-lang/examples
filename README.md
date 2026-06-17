@@ -11,3 +11,7 @@ Sample projects for [Jolt](https://github.com/jolt-lang/jolt).
 - [commonmark-app](commonmark-app/) — a dependency-free Markdown → HTML renderer
   in pure Clojure (no JVM, no deps). CommonMark Java can't run on jolt, so this
   is a self-contained parser; building it surfaced several jolt bugs.
+- [http-client-app](http-client-app/) — the clj-http-lite HTTP client on jolt via
+  [jolt-lang/http-client](https://github.com/jolt-lang/http-client) (java.net /
+  TLS / gzip host shims). Hits a local server and real HTTPS endpoints, then
+  compiles to a native executable.
