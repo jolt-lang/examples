@@ -1,0 +1,56 @@
+# commonmark-app
+
+A compact, **dependency-free** Markdown → HTML renderer running on Jolt. Pure
+Clojure (`clojure.string` only) — no JVM, no external deps.
+
+```
+jolt run -m app.core          # render a sample document
+jolt run -m app.commonmark-test   # run the test suite (38 cases)
+```
+
+## Why this and not org.commonmark/commonmark
+
+`org.commonmark/commonmark` is Atlassian's CommonMark **Java** library — compiled
+Java bytecode used through interop. Jolt has no JVM and cannot load Java jars, so
+that library can't run here. The pure-Clojure CommonMark parser `marchio` exists
+but drags in `kern`, `fluokitten` and `cheshire` (all dead and/or Java-backed)
+and is itself incomplete. So this example is a small, self-contained parser
+written for the occasion rather than a port — it shows the kind of text-wrangling
+Clojure code Jolt runs well, and it shook out several Jolt bugs (below).
+
+## Supported
+
+Block level: ATX headings (`#`–`######`), setext headings, paragraphs, thematic
+breaks, fenced code (``` ``` ``` / `~~~`, with info string), indented code,
+blockquotes, ordered/unordered lists with nesting and tight/loose detection.
+
+Inline: `*`/`_` emphasis and `**`/`__` strong (with flanking + rule-of-three),
+backtick code spans, `[text](url "title")` links, `![alt](url)` images, `<url>`
+and `<email>` autolinks, raw inline HTML, backslash escapes, hard breaks
+(two trailing spaces or a trailing `\`), and HTML escaping of `& < > "`.
+
+## Not supported
+
+It targets the common subset, not the full CommonMark spec suite. Notably:
+reference links/definitions, HTML blocks, list-item lazy continuation across
+blank lines, link-reference titles spanning lines, and the long tail of emphasis
+edge cases. Tabs are expanded to 4 spaces.
+
+## Jolt bugs surfaced
+
+Building this turned up several Jolt divergences from Clojure, each worked around
+in the source (search for `NOTE:`):
+
+- **Regex compiler hangs** on concatenated nested bounded quantifiers — the
+  canonical email-autolink pattern `…{0,61}…{0,61}…` never returns from compile.
+  Worked around with `*`.
+- **Backreferences** (`\1`) aren't honored — the thematic-break pattern
+  `([-*_])(?:\1…)` matched nothing; spelled the three chars out instead.
+- **String isn't a seqable of chars** consistently: `(set "ab")` throws,
+  `(vec "ab")` yields `["a" "b"]` (strings), `(into #{} "ab")` yields `#{97 98}`
+  (code points) — though `(seq "ab")`, `(get s i)`, `(first s)` are all correct.
+  Used `(set (seq …))`.
+- **`(str/split s re -1)`** (negative limit, "keep trailing empties") returns
+  `[]`. The 2-arg `str/split` already keeps interior/trailing empties on Jolt, so
+  it's used instead.
+- **`System/exit`** is unsupported.

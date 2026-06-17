@@ -1,0 +1,4 @@
+{:paths ["src" "test"]
+ :deps {}
+ :tasks {run  {:doc "render a sample document to HTML" :main-opts ["-m" "app.core"]}
+         test {:doc "run the parser test suite" :main-opts ["-m" "app.commonmark-test"]}}}
