@@ -33,9 +33,7 @@
 ;; Inline parsing
 ;; ------------------------------------------------------------------
 
-;; NOTE: `(set "string")` and `(into #{} "string")` misbehave on Jolt today
-;; (string isn't treated as a seqable of chars there), so seq it first.
-(def ^:private punct (set (seq "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")))
+(def ^:private punct (set "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"))
 
 (defn- punct? [c] (and c (contains? punct c)))
 (defn- ws? [c] (or (nil? c) (= c \space) (= c \tab) (= c \newline)))
@@ -79,11 +77,8 @@
         :else (recur (inc j))))))
 
 (def ^:private autolink-uri #"^<[a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^<>\x00-\x20]*>")
-;; NOTE: the canonical CommonMark email pattern uses {0,61} label bounds, but two
-;; such nested bounded quantifiers concatenated hang Jolt's regex compiler today,
-;; so use `*` (unbounded labels) instead — same matches for real addresses.
 (def ^:private autolink-email
-  #"^<[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*>")
+  #"^<[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*>")
 (def ^:private inline-html
   #"(?s)^</?[a-zA-Z][a-zA-Z0-9-]*(?:\s+[a-zA-Z_:][a-zA-Z0-9_.:-]*(?:\s*=\s*(?:[^\s\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*\s*/?>|^<!--.*?-->")
 
@@ -282,9 +277,7 @@
 ;; ------------------------------------------------------------------
 
 (def ^:private re-atx #"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
-;; NOTE: a `\1` backreference (matching a run of the SAME char) doesn't work on
-;; Jolt's regex engine today, so spell out the three thematic-break chars.
-(def ^:private re-thematic #"^ {0,3}(?:-[ \t]*){3,}$|^ {0,3}(?:\*[ \t]*){3,}$|^ {0,3}(?:_[ \t]*){3,}$")
+(def ^:private re-thematic #"^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$")
 (def ^:private re-fence #"^( {0,3})(`{3,}|~{3,})[ \t]*([^`]*?)[ \t]*$")
 (def ^:private re-bullet #"^( {0,3})([-+*])(?:[ \t]+(.*)|[ \t]*)$")
 (def ^:private re-ordered #"^( {0,3})(\d{1,9})([.)])(?:[ \t]+(.*)|[ \t]*)$")
@@ -469,7 +462,6 @@
                        (str/replace "\r\n" "\n")
                        (str/replace "\r" "\n")
                        (str/replace "\t" "    "))
-        ;; NOTE: a negative limit (`-1`, "keep trailing empties") yields [] on
-        ;; Jolt today; its 2-arg split already keeps interior/trailing empties.
-        lines (vec (str/split normalized #"\n"))]
+        ;; -1 keeps trailing empty lines so blank-line block boundaries survive
+        lines (vec (str/split normalized #"\n" -1))]
     (render-nodes (parse-blocks lines) false)))
