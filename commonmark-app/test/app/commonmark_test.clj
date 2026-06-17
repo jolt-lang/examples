@@ -72,6 +72,6 @@
       (println "  expected:" (pr-str expected))
       (println "  actual:  " (pr-str actual)))
     (println (str "\n" passed "/" (count cases) " passed"))
-    (seq failed)))
+    (when (seq failed) (System/exit 1))))
 
 (defn -main [& _] (run))

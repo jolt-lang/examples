@@ -36,21 +36,19 @@ reference links/definitions, HTML blocks, list-item lazy continuation across
 blank lines, link-reference titles spanning lines, and the long tail of emphasis
 edge cases. Tabs are expanded to 4 spaces.
 
-## Jolt bugs surfaced
+## Jolt bugs surfaced and fixed
 
-Building this turned up several Jolt divergences from Clojure, each worked around
-in the source (search for `NOTE:`):
+Building this turned up five Jolt divergences from Clojure. All were fixed in
+Jolt (PR #158), so the source now uses the canonical Clojure forms:
 
-- **Regex compiler hangs** on concatenated nested bounded quantifiers — the
-  canonical email-autolink pattern `…{0,61}…{0,61}…` never returns from compile.
-  Worked around with `*`.
-- **Backreferences** (`\1`) aren't honored — the thematic-break pattern
-  `([-*_])(?:\1…)` matched nothing; spelled the three chars out instead.
-- **String isn't a seqable of chars** consistently: `(set "ab")` throws,
-  `(vec "ab")` yields `["a" "b"]` (strings), `(into #{} "ab")` yields `#{97 98}`
-  (code points) — though `(seq "ab")`, `(get s i)`, `(first s)` are all correct.
-  Used `(set (seq …))`.
-- **`(str/split s re -1)`** (negative limit, "keep trailing empties") returns
-  `[]`. The 2-arg `str/split` already keeps interior/trailing empties on Jolt, so
-  it's used instead.
-- **`System/exit`** is unsupported.
+- **Regex compiler hung** on concatenated nested bounded quantifiers — the
+  canonical email-autolink pattern `…{0,61}…{0,61}…` never returned from compile
+  (the `{n,m}` desugaring expanded to ~2ⁿ PEG nodes).
+- **Backreferences** (`\1`) weren't honored — the thematic-break pattern
+  `([-*_])(?:\1…)` matched nothing.
+- **String wasn't a seqable of chars** consistently: `(set "ab")` threw,
+  `(vec "ab")` yielded `["a" "b"]` (strings), `(into #{} "ab")` yielded
+  `#{97 98}` (code points).
+- **`(str/split s re -1)`** (negative limit) returned `[]`, and the 2-arg form
+  didn't trim trailing empties like Clojure.
+- **`System/exit`** was unsupported.
