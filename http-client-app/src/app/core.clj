@@ -1,6 +1,7 @@
 (ns app.core
-  "Jolt's built-in HTTP client (jolt.http-client, backed by the system curl) — TLS,
-  redirects, gzip, query params and JSON POST against real HTTPS endpoints."
+  "jolt-lang/http-client (clj-http-lite over jolt.ffi: raw sockets + OpenSSL TLS +
+  libz) — TLS, redirects, gzip, query params and JSON POST against real HTTPS
+  endpoints."
   (:require [jolt.http-client :as http]
             [clojure.string :as str]))
 
