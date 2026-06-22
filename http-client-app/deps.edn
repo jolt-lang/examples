@@ -1,7 +1,10 @@
 {:paths ["src"]
 
- ;; The HTTP client is built into jolt (jolt.http-client, over the system curl);
- ;; this example has no external dependencies.
- :deps {}
+ ;; The HTTP client is a library (clj-http-lite over jolt.ffi). It declares its
+ ;; own native deps (libc sockets / libz / OpenSSL) in :jolt/native; jolt loads
+ ;; them transitively. clj-http-lite is pulled in by the library.
+ :deps {jolt-lang/http-client
+        {:git/url "https://github.com/jolt-lang/http-client"
+         :git/sha "d49f918788b8ad0a703c7f429567c613bd527dda"}}
 
  :tasks {run {:doc "hit some real HTTPS endpoints" :main-opts ["-m" "app.core"]}}}
