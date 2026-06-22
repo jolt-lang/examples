@@ -1,10 +1,13 @@
 {:paths ["src" "resources"]
 
  ;; Git deps are fetched into a global cache (~/.jolt/gitlibs) by jolt. Pin full
- ;; SHAs — `git fetch` can't resolve short ones. The HTTP server and the SQLite
- ;; binding are built into jolt (jolt.http.server / jdbc.core); the rest are
- ;; pure-Clojure libraries pulled straight from their git repos and run unchanged.
- :deps {ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
+ ;; SHAs — `git fetch` can't resolve short ones. The HTTP server is built into
+ ;; jolt (jolt.http.server); everything else — including the SQLite database
+ ;; (jolt-lang/db's jdbc.core, which binds libsqlite3 itself via jolt.ffi) — is a
+ ;; library pulled straight from its git repo.
+ :deps {jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
+                      :git/sha "9477261a808a66a4d03c7b120c7f073d67c5edb3"}
+        ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
                         :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
                         :deps/root "ring-core"}
         ring/ring-codec {:git/url "https://github.com/ring-clojure/ring-codec"

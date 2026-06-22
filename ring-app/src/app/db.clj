@@ -1,6 +1,6 @@
 (ns app.db
-  "Guestbook storage: SQLite through jolt's built-in jdbc.core (the jolt-lang/db
-  API over the system libsqlite3 via FFI), queries written as honeysql data."
+  "Guestbook storage: SQLite through jolt-lang/db's jdbc.core (which binds the
+  system libsqlite3 itself via jolt.ffi), queries written as honeysql data."
   (:require [jdbc.core :as jdbc]
             [honey.sql :as sql]))
 
