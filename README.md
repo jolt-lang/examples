@@ -29,5 +29,5 @@ Chez's FFI.
   via FFI) with a SQLite guestbook (jolt's built-in `jdbc.core`/libsqlite3).
   `joltc run`, `joltc -M:test`.
 - [malli-app](malli-app/) — [metosin/malli](https://github.com/metosin/malli)
-  schema validation. Loads on jolt; a few deeply JVM-coupled internals are still
-  being worked through.
+  schema validation, pulled from git. `m/validate`/`m/explain` across the schema
+  vocabulary (predicates, `:map`, `:vector`, `:enum`, bounded `:int`, …).
