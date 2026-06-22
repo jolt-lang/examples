@@ -2,7 +2,7 @@
   (:require [app.core :as core]
             [app.db :as db]
             [config.core :as config]
-            [ring-janet.adapter :as adapter]
+            [jolt.http.server :as adapter]
             [jolt.http-client :as http]
             [clojure.string :as str]))
 

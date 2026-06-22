@@ -20,7 +20,7 @@ Then visit <http://127.0.0.1:3000>, sign the guestbook, and watch the request lo
 
 | Concern        | Source                                                        |
 | ---            | ---                                                           |
-| HTTP server    | built in — `ring-janet.adapter/run-server` (BSD sockets, FFI) |
+| HTTP server    | built in — `jolt.http.server/run-server` (BSD sockets, FFI) |
 | Database       | built in — `jdbc.core` (the system libsqlite3, FFI)          |
 | Middleware     | git — `ring/ring-core`, `ring/ring-codec`                     |
 | Routing        | git — `metosin/reitit` (+ `jolt-lang/router` Trie mirror)     |

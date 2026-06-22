@@ -54,24 +54,18 @@ redirect to a `.ppm`, and compare against the same render on JVM Clojure —
 image statistics (mean/stdev of pixel values) come out identical within
 sampling noise. Both variants produce the same image.
 
-## Where jolt stands
+## What the data model buys
 
-Apple M1 Max, same source, clean serial runs, mean of timed runs after warmup,
-all measured in one session (so the ratios are apples-to-apples):
+Absolute timings depend on the machine and the substrate, so the figures here
+are illustrative; what is stable is the *ratio* between the two variants run
+back-to-back on the same machine.
 
-| variant / mode | per render | vs baseline |
-|---|---|---|
-| baseline (all maps), default compile | 26.9 s | — |
-| baseline, `JOLT_DIRECT_LINK=1` | 22.7 s | 1.0× |
-| **`ray_typed`, `JOLT_DIRECT_LINK=1`** | **8.6 s** | **2.65×** |
-| `ray_typed`, `+ JOLT_WHOLE_PROGRAM=1` | 8.4 s | 2.70× |
-
-The headline: **moving the data model from maps to records cuts the render by
-2.65×.** Maps pay a keyword-hash lookup and a sorted-or-hashed allocation per
-vec op; records lay the fields out in declared order, read them by index, and
-construct ~2× cheaper. The material `Scatter` protocol turns what was a stored
-closure call into a devirtualizable protocol dispatch, and the field hints keep
-nested vecs typed so the inner arithmetic proves its reads.
+The headline: **moving the data model from maps to records cuts the render
+roughly 2.6×.** Maps pay a keyword-hash lookup and a sorted-or-hashed
+allocation per vec op; records lay the fields out in declared order, read them
+by index, and construct ~2× cheaper. The material `Scatter` protocol turns what
+was a stored closure call into a devirtualizable protocol dispatch, and the
+field hints keep nested vecs typed so the inner arithmetic proves its reads.
 
 Whole-program optimization is roughly neutral on this program because it is a
 single namespace: its main lever — direct-linking native `clojure.math/sqrt`
@@ -81,14 +75,13 @@ remaining whole-program-only wins (cross-namespace param-type propagation,
 const-linking `^:redef`/data vars) have nothing to bite on here; they pay off
 when a program spans namespaces.
 
-For external context, an earlier session on the same machine measured jank
-0.1-alpha `-O3 -Odirect-call` at 1.17 s and Clojure JVM 1.12 at 1.44 s on the
-naive map version. That session ran ~1.55× faster than this one (its jolt
-default was 17.3 s vs 26.9 s here), so normalizing `ray_typed`'s 8.6 s to it
-lands around ~5.5 s — roughly 3.8× JVM, down from the ~8.5× the all-maps port
-sat at. The remaining gap is the floor of a bytecode interpreter and a Janet
-allocation per vec op, where the JIT/AOT competitors run native code and escape
-most allocations.
+For external context, published numbers for the same program on other runtimes
+exist (jank 0.1-alpha `-O3 -Odirect-call` and Clojure JVM 1.12 on the naive map
+version, both well under 2 s on an M1 Max). Those were measured separately, not
+in a current head-to-head, so treat them as background rather than a direct
+comparison. The general phenomenon they point at holds regardless of substrate:
+a per-vec allocation in the inner loop is the dominant cost, and the data-model
+pivot from maps to records is what removes most of it.
 
 ## Why, concretely
 
