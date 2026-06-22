@@ -23,10 +23,11 @@ Chez's FFI.
 - [http-client-app](http-client-app/) — jolt's built-in HTTP client
   (`jolt.http-client`, over the system curl) against real HTTPS endpoints: TLS,
   redirects, gzip, query params, JSON POST.
-- [ring-app](ring-app/) — a guestbook web app: ring-core middleware + hiccup +
-  yogthos/config (all from git) on jolt's built-in HTTP server (BSD sockets via
-  FFI) with a SQLite guestbook (jolt's built-in libsqlite3 binding). `joltc run`,
-  `joltc -M:test`.
+- [ring-app](ring-app/) — a guestbook web app on the real JVM-style stack:
+  ring-core middleware + reitit routing + Selmer templates + honeysql + yogthos/
+  config (all from git, run unchanged) on jolt's built-in HTTP server (BSD sockets
+  via FFI) with a SQLite guestbook (jolt's built-in `jdbc.core`/libsqlite3).
+  `joltc run`, `joltc -M:test`.
 - [malli-app](malli-app/) — [metosin/malli](https://github.com/metosin/malli)
   schema validation. Loads on jolt; a few deeply JVM-coupled internals are still
   being worked through.

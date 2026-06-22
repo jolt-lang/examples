@@ -1,26 +1,33 @@
 (ns app.db
-  "Guestbook storage on jolt's built-in SQLite (jolt.sqlite, over the system
-  libsqlite3 via FFI)."
-  (:require [jolt.sqlite :as db]))
+  "Guestbook storage: SQLite through jolt's built-in jdbc.core (the jolt-lang/db
+  API over the system libsqlite3 via FFI), queries written as honeysql data."
+  (:require [jdbc.core :as jdbc]
+            [honey.sql :as sql]))
 
 (defn connect
-  "Open the guestbook database and ensure the schema. db-path comes from config
-  (:database-url), e.g. \"guestbook.sqlite3\" or \":memory:\"."
+  "Open the guestbook database and ensure the schema. db-path comes from
+  config (:database-url), e.g. \"guestbook.sqlite3\" or \":memory:\"."
   [db-path]
-  (let [conn (db/open db-path)]
-    (db/execute! conn
-      (str "create table if not exists greetings ("
-           "  id integer primary key,"
-           "  name text not null,"
-           "  created_at text default CURRENT_TIMESTAMP)"))
+  (let [conn (jdbc/connection (str "sqlite:" db-path))]
+    (jdbc/execute! conn
+      (sql/format {:create-table [:greetings :if-not-exists]
+                   :with-columns [[:id :integer :primary-key]
+                                  [:name :text [:not nil]]
+                                  [:created-at :text
+                                   [:default [:raw "CURRENT_TIMESTAMP"]]]]}))
     conn))
 
 (defn add-greeting! [conn name]
-  (db/execute! conn "insert into greetings (name) values (?)" [name])
-  (db/last-insert-id conn))
+  (jdbc/execute! conn (sql/format {:insert-into :greetings
+                                   :values [{:name name}]}))
+  (jdbc/last-insert-id conn))
 
 (defn recent-greetings [conn n]
-  (db/query conn "select name, created_at as \"created-at\" from greetings order by id desc limit ?" [n]))
+  (jdbc/fetch conn (sql/format {:select [:name :created-at]
+                                :from [:greetings]
+                                :order-by [[:id :desc]]
+                                :limit n})))
 
 (defn greeting-count [conn]
-  (:n (first (db/query conn "select count(*) as n from greetings"))))
+  (:n (jdbc/fetch-one conn (sql/format {:select [[[:count :*] :n]]
+                                        :from [:greetings]}))))
