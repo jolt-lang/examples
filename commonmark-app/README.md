@@ -4,8 +4,8 @@ A compact, **dependency-free** Markdown → HTML renderer running on Jolt. Pure
 Clojure (`clojure.string` only) — no JVM, no external deps.
 
 ```
-jolt run -m app.core          # render a sample document
-jolt run -m app.commonmark-test   # run the test suite (38 cases)
+joltc run -m app.core          # render a sample document
+joltc run -m app.commonmark-test   # run the test suite (38 cases)
 ```
 
 ## Why this and not org.commonmark/commonmark

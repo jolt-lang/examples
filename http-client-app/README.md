@@ -1,44 +1,32 @@
 # http-client-app
 
-A small [Jolt](https://github.com/jolt-lang/jolt) example that exercises the
-[clj-http-lite](https://github.com/clj-commons/clj-http-lite) HTTP client through
-[jolt-lang/http-client](https://github.com/jolt-lang/http-client), then compiles
-to a native executable.
-
-`src/app/core.clj` starts a tiny local HTTP server (spork, via Jolt's `janet.*`
-bridge), makes a couple of requests against it, then — if the network is up —
-hits some real HTTPS endpoints to show TLS, query params, JSON POST and an
-`:insecure?` self-signed request.
-
-## Layout
+Jolt's built-in HTTP client, `jolt.http-client`, against real HTTPS endpoints.
 
 ```
-deps.edn      jolt-lang/http-client + clj-http-lite git deps, spork as a :jpm/module
-main.janet    native-executable entry point (bakes a Jolt ctx with app.core)
-project.janet jpm declare-executable
-build.sh      resolves deps and builds build/http-client-app
-src/app/core.clj  the demo
+joltc run -m app.core
 ```
 
-## Run it
+The client is part of jolt — no dependencies. It's backed by the system `curl`
+binary (libcurl's `curl_easy_setopt` is variadic, and Chez's fixed-signature FFI
+can't place a variadic arg where Apple Silicon expects it without a per-platform
+C shim; shelling to `curl` uses the same native library, with TLS, redirects and
+gzip, on every platform). The API mirrors the common Clojure HTTP shape:
 
-Needs [Janet](https://janet-lang.org) + `jpm`, a `jolt` build on `PATH`, and
-OpenSSL for the https calls.
+```clojure
+(require '[jolt.http-client :as http])
 
-```sh
-git clone https://github.com/jolt-lang/jolt.git
-cd jolt && git submodule update --init && jpm build
-export PATH="$PWD/build:$PATH" JOLT_REPO="$PWD"
-cd ../examples/http-client-app
-
-jolt task run        # run from source (resolves git deps on first run)
-./build.sh           # compile a native executable at build/http-client-app
-./build/http-client-app
+(http/get  "https://example.com")
+(http/get  "https://httpbin.org/get"  {:query-params {"q" "jolt"}})
+(http/post "https://httpbin.org/post" {:body "{\"a\":1}" :content-type :json})
+;; also head, put, delete, and the lower-level (http/request {:method :url …})
 ```
 
-## Notes
+A response is `{:status N :headers {…} :body "…"}`. Options: `:headers`,
+`:body`, `:query-params`, `:content-type` (`:json`/`:xml`/`:form` or a string),
+`:insecure?` (skip TLS verification), `:follow?`, `:timeout-ms`.
 
-- `jolt-lang/http-client` supplies the `java.net` / TLS / gzip host shims
-  clj-http-lite needs; they are not part of jolt core (require installs them).
-- The real-endpoint requests are wrapped so the demo still runs (and the local
-  server part still passes) with no network.
+## Requirements
+
+- `joltc` on PATH, and the system `curl` binary (preinstalled on macOS and most
+  Linux distros).
+- A network connection for the real endpoints.

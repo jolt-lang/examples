@@ -35,13 +35,13 @@ data model buys:
 
 ```bash
 # all-maps baseline
-jolt -M:baseline 3
+joltc -M:baseline 3
 
 # typed records (direct-linked: records + the structural type inference)
-JOLT_DIRECT_LINK=1 jolt -M:typed 3
+JOLT_DIRECT_LINK=1 joltc -M:typed 3
 
 # typed + whole-program (closed-world inference + var const-linking)
-JOLT_DIRECT_LINK=1 JOLT_WHOLE_PROGRAM=1 jolt -M:typed 3
+JOLT_DIRECT_LINK=1 JOLT_WHOLE_PROGRAM=1 joltc -M:typed 3
 ```
 
 The `:baseline` / `:typed` deps.edn aliases run `NS/-main` with the trailing
