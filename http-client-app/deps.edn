@@ -1,16 +1,7 @@
 {:paths ["src"]
 
- :deps {;; clj-http-lite with Jolt platform support (java.net / TLS / gzip shims).
-        jolt-lang/http-client {:git/url "https://github.com/jolt-lang/http-client"
-                               :git/sha "c87d6d7010c646592bc7e2e7f9c935b662bf760e"}
-        org.clj-commons/clj-http-lite {:git/url "https://github.com/clj-commons/clj-http-lite"
-                                       :git/sha "5bc2a98969b4926d090787baf9297fd73cea42d0"}
-        ;; the local demo server uses spork/http through the janet bridge
-        janet/spork-http {:jpm/module "spork/http"
-                          :jpm/install "git::https://github.com/janet-lang/spork.git::881a92a05f2093d1595ef5bceca93d22675fb0c6"}}
+ ;; The HTTP client is built into jolt (jolt.http-client, over the system curl);
+ ;; this example has no external dependencies.
+ :deps {}
 
- :aliases {:nrepl {:main-opts ["nrepl-server"]}}
-
- :tasks {run        {:doc "run the demo" :main-opts ["-m" "app.core"]}
-         uberscript "mkdir -p target && jolt uberscript target/http-client-app.clj -m app.core"
-         build      "./build.sh"}}
+ :tasks {run {:doc "hit some real HTTPS endpoints" :main-opts ["-m" "app.core"]}}}
