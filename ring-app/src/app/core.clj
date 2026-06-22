@@ -1,20 +1,19 @@
 (ns app.core
-  "The combined example: ring-core middleware + reitit routing + Selmer HTML
-  templates + yogthos/config + a sqlite guestbook (jolt-lang/db's jdbc.core
-  with honeysql queries) — every library straight from its git repo.
+  "A guestbook web app on jolt running the real JVM-style stack from git:
+  ring-core middleware + reitit routing + Selmer HTML templates + yogthos/config
+  + honeysql queries — served by jolt's built-in HTTP server (BSD sockets via
+  FFI) over a SQLite guestbook (jolt's built-in jdbc.core / libsqlite3 binding).
 
-  reitit needs its :clj reader branches, but the other libraries are validated
-  under jolt's default feature set. So instead of forcing the whole process to
-  :clj, the require of reitit (below, outside this ns form) is scoped: features
-  are switched to :clj only for that load, then restored. The app runs under
-  default features."
+  reitit reads its :clj branches, so the require below is scoped: reader features
+  are switched to :clj only for that load, then restored. Everything else runs
+  under jolt's default feature set, and the app serves under default features."
   (:require [config.core :as config]
             [clojure.tools.logging :as log]
             [selmer.parser :as selmer]
             [clojure.java.io :as io]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
-            [ring-janet.adapter :as adapter]
+            [jolt.http.server :as adapter]
             [app.db :as db]))
 
 ;; Load reitit under :clj features, then restore — see the ns docstring.
@@ -78,10 +77,10 @@
 (defn -main [& args]
   (config/reload-env)
   (let [port (or (some-> (first args) parse-long) (:port config/env 3000))
-        db-path (:database-url config/env "guestbook.sqlite3")
-        server (adapter/run-server app {:port port})]
+        db-path (:database-url config/env "guestbook.sqlite3")]
     (reset! conn (db/connect db-path))
+    (adapter/run-server app {:port port})
     (log/info (str "ring-app listening on http://127.0.0.1:" port) "— guestbook:" db-path)
     (log/info "PORT / DATABASE_URL override config.edn")
-    (janet.ev/sleep 1000000000)
-    server))
+    ;; keep the process alive while the server thread serves
+    (loop [] (Thread/sleep 3600000) (recur))))

@@ -1,7 +1,9 @@
 {:paths ["src" "resources"]
 
- ;; Git deps are fetched into a global cache (~/.jolt/gitlibs) by jolt.
- ;; Pin full SHAs — `git fetch` can't resolve short ones.
+ ;; Git deps are fetched into a global cache (~/.jolt/gitlibs) by jolt. Pin full
+ ;; SHAs — `git fetch` can't resolve short ones. The HTTP server and the SQLite
+ ;; binding are built into jolt (jolt.http.server / jdbc.core); the rest are
+ ;; pure-Clojure libraries pulled straight from their git repos and run unchanged.
  :deps {ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
                         :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
                         :deps/root "ring-core"}
@@ -11,21 +13,11 @@
                         :git/sha "e9076ad18fce0b24c72d317dd23c43766dd95c8c"}
         yogthos/selmer {:git/url "https://github.com/yogthos/Selmer"
                         :git/sha "fa4a42e77b48905f87b3bf0dc1c698f2c329c722"}
-        jolt-lang/ring-janet-adapter
-          {:git/url "https://github.com/jolt-lang/ring-janet-adapter"
-           :git/sha "5b6164b8b4d608dfe2f7a9144117b6f5454ebf41"}
-        jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
-                      :git/sha "cd802749e4d45d4b860e5cef2c8ae0f8c6de63eb"}
-        ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
-        org.clojure/tools.logging
-          {:git/url "https://github.com/jolt-lang/logging"
-           :git/sha "b4f2deb5cf9693b31fbff4f99fb46cc48691d49d"}
         com.github.seancorfield/honeysql
           {:git/url "https://github.com/seancorfield/honeysql"
            :git/sha "726f899cb90514b153cef2dc657695a85883d16e"}
-        ;; reitit routing — needs JOLT_FEATURES including "clj" (set in tasks /
-        ;; build.sh) so reitit reads its :clj branches; jolt-lang/router
-        ;; mirrors the reitit.Trie Java class.
+        ;; reitit routing — needs JOLT_FEATURES with "clj" so reitit reads its
+        ;; :clj branches; jolt-lang/router mirrors the reitit.Trie Java class.
         metosin/reitit-core {:git/url "https://github.com/metosin/reitit"
                              :git/sha "5d5c965deb3c7c8d64b8dd636432eaa14f0324ec"
                              :deps/root "modules/reitit-core"}
@@ -33,22 +25,13 @@
                                 :git/sha "c968c38baccd4219fe0ba592d89af37ea8e426bf"}
         jolt-lang/router {:git/url "https://github.com/jolt-lang/router"
                           :git/sha "d35a08560fd2b84faa5e4e1de3f0fb59fa6ce90f"}
-        ;; janet-side dependency: the HTTP server. jolt verifies the jpm
-        ;; module is importable (running `jpm install spork` once if not) and
-        ;; the janet.* bridge autoloads it at first janet.spork.http/* use.
-        ;; Starting 2025-12-07 spork declares its gfx2d .janet files as native
-        ;; sources in project.janet, which jpm's declare-native rejects
-        ;; ("unknown source file type"), so a bare `jpm install spork` against
-        ;; HEAD fails. Pin to the last commit before that change so we still
-        ;; track recent spork/http rather than the much older v1.1.1 tag.
-        janet/spork-http {:jpm/module "spork/http"
-                          :jpm/install "git::https://github.com/janet-lang/spork.git::881a92a05f2093d1595ef5bceca93d22675fb0c6"}}
+        ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
+        org.clojure/tools.logging
+          {:git/url "https://github.com/jolt-lang/logging"
+           :git/sha "b4f2deb5cf9693b31fbff4f99fb46cc48691d49d"}}
 
- :aliases {:nrepl {:main-opts ["nrepl-server"]}
-           :test  {:extra-paths ["test"]
-                   :main-opts ["-m" "app.core-test"]}}
+ :aliases {:test {:extra-paths ["test"]
+                  :main-opts ["-m" "app.core-test"]}}
 
- :tasks {run        {:doc "run the server" :main-opts ["-m" "app.core"]}
-         test       "jolt -M:test"
-         uberscript "mkdir -p target && jolt uberscript target/ring-app.clj -m app.core"
-         build      "./build.sh"}}
+ :tasks {run  {:doc "run the server" :main-opts ["-m" "app.core"]}
+         test "joltc -M:test"}}

@@ -4,11 +4,11 @@ Runs [metosin/malli](https://github.com/metosin/malli) on jolt for data schema
 validation.
 
 ```
-jolt run -m app.core
+joltc run -m app.core
 ```
 
-(set `JOLT_FEATURES=clj,jolt,default` so malli's `.cljc` sources read their
-`:clj` branches.)
+(malli's `.cljc` sources read their `:clj` branches — `:clj` is one of jolt's
+default reader features, so no extra configuration is needed.)
 
 ## Status
 

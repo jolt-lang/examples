@@ -1,9 +1,11 @@
 {:port 3000
  :database-url "guestbook.sqlite3"
  :name "Jolt"
- :motd "ring-core + Selmer + config, all from deps.edn, served by spork/http"
+ :motd "ring-core + reitit + Selmer + honeysql + config, all from deps.edn, on jolt's native HTTP server + SQLite"
  :features ["ring middleware (params, keyword-params)"
+            "reitit routing"
             "Selmer HTML templates"
+            "honeysql queries"
             "yogthos/config (PORT env overrides :port)"
-            "an nREPL you can connect an editor to"
-            "a native executable build"]}
+            "jolt's built-in HTTP server (BSD sockets via FFI)"
+            "a SQLite guestbook (jdbc.core / libsqlite3)"]}
