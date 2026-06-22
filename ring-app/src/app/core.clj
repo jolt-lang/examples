@@ -13,7 +13,7 @@
             [clojure.java.io :as io]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
-            [jolt.http.server :as adapter]
+            [ring-chez.adapter :as adapter]
             [app.db :as db]))
 
 ;; Load reitit under :clj features, then restore — see the ns docstring.
