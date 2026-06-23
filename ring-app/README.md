@@ -39,14 +39,18 @@ its native libs (libc sockets, libsqlite3) at startup, so it runs with no jolt o
 Chez on the path:
 
 ```
-joltc build -m app.core -o ring-app
-PORT=8080 ./ring-app
+joltc build -m app.core               # -> target/release/ring-app
+joltc build -m app.core --dev         # -> target/debug/ring-app
+PORT=8080 ./target/release/ring-app
 ```
 
-A standalone build needs Chez's kernel dev files (`libkernel.a` + `scheme.h`) and
-a C compiler; set `JOLT_CHEZ_CSV` to the `csv<ver>/<machine>` dir if it isn't
-auto-detected. `config.edn` is read at runtime (via `io/file`), so keep it next to
-the binary and edit it without rebuilding.
+Output goes under `target/`, cargo-style: `target/release` by default (and with
+`--opt`), `target/debug` with `--dev`; the binary is named after the project dir.
+`-o PATH` overrides (relative to the project). A standalone build needs Chez's
+kernel dev files (`libkernel.a` + `scheme.h`) and a C compiler; set
+`JOLT_CHEZ_CSV` to the `csv<ver>/<machine>` dir if it isn't auto-detected.
+`config.edn` is read at runtime (via `io/file`), so keep it next to the binary and
+edit it without rebuilding.
 
 The Selmer template is a resource loaded through `io/resource`. There are two ways
 to ship it, selected in `deps.edn`:
@@ -61,7 +65,7 @@ to ship it, selected in `deps.edn`:
 any directory with no `resources/` dir present:
 
 ```
-mkdir /tmp/deploy && cp ring-app config.edn /tmp/deploy/
+mkdir /tmp/deploy && cp target/release/ring-app config.edn /tmp/deploy/
 cd /tmp/deploy && ./ring-app          # serves; the template is in the binary
 ```
 
@@ -70,7 +74,7 @@ cd /tmp/deploy && ./ring-app          # serves; the template is in the binary
 cwd). Ship `resources/` next to the binary:
 
 ```
-cp -r ring-app config.edn resources /tmp/deploy/
+cp -r target/release/ring-app config.edn resources /tmp/deploy/
 cd /tmp/deploy && ./ring-app          # reads templates/index.html from resources/
 ```
 
