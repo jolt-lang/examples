@@ -2,7 +2,7 @@
   (:require [app.core :as core]
             [app.db :as db]
             [config.core :as config]
-            [jolt.http.server :as adapter]
+            [ring-chez.adapter :as adapter]
             [jolt.http-client :as http]
             [clojure.string :as str]))
 
@@ -66,7 +66,8 @@
   (let [server (adapter/run-server core/app {:port 8377})]
     (Thread/sleep 200)
     (let [resp    (http/get "http://127.0.0.1:8377/?name=Wire")
-          resp404 (http/get "http://127.0.0.1:8377/nope")]
+          ;; clj-http-lite throws on 4xx/5xx by default; opt out to inspect the 404.
+          resp404 (http/get "http://127.0.0.1:8377/nope" {:throw-exceptions false})]
       (check "GET status" 200 (:status resp))
       (check-has "HTML over the wire" "Hello WIRE!" (:body resp))
       (check-has "content type is html" "text/html" (get (:headers resp) "content-type" ""))
