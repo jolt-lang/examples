@@ -22,12 +22,15 @@
   (require '[reitit.trie-jolt] '[reitit.core :as reitit])
   (__reader-features-set! prev))
 
-(def template (slurp (io/resource "templates/index.html")))
+;; Loaded on first render, not at namespace load — so io/resource resolves at
+;; runtime against the live source roots. In a standalone binary that's either
+;; the embedded copy (:jolt/build :embed) or a resources/ dir next to the binary.
+(def template (delay (slurp (io/resource "templates/index.html"))))
 
 (defonce conn (atom nil))
 
 (defn render-index [cfg params]
-  (selmer/render template
+  (selmer/render @template
                  {:name      (get params :name (get cfg :name "world"))
                   :motd      (:motd cfg)
                   :features  (:features cfg)
