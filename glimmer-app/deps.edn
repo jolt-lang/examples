@@ -1,0 +1,17 @@
+{:paths ["src"]
+
+ ;; glimmer is consumed as a local sibling dep. jolt's deps resolver reads
+ ;; glimmer's deps.edn, merges its :paths (glimmer/src) onto the classpath, and
+ ;; — importantly — merges glimmer's :jolt/native declarations (the GTK4/glib
+ ;; shared libraries) into this project. So the native libs are loaded for the
+ ;; process without re-declaring them here. Push glimmer to a git remote and
+ ;; swap to {:git/url ... :git/sha ...} to make this app self-contained.
+ :deps {jolt-lang/glimmer {:local/root "../../glimmer"}}
+
+ ;; `joltc -M:run` (or the `run` task) opens the window and blocks until it's
+ ;; closed. `joltc build` compiles a standalone binary that loads the GTK/glib
+ ;; libs at startup.
+ :aliases {:run {:main-opts ["-m" "app.core"]}}
+
+ :tasks {run  "joltc -M:run"
+         build "joltc build -m app.core"}}
