@@ -1,10 +1,16 @@
 {:paths ["src" "resources"]
 
  ;; Git deps are fetched into a global cache (~/.jolt/gitlibs) by jolt. Pin full
- ;; SHAs — `git fetch` can't resolve short ones. The HTTP server and the SQLite
- ;; binding are built into jolt (jolt.http.server / jdbc.core); the rest are
+ ;; SHAs — `git fetch` can't resolve short ones. The HTTP server is the
+ ;; jolt-lang/ring-chez-adapter library (BSD sockets over jolt.ffi); the SQLite
+ ;; binding is jolt-lang/db (jdbc.core over libsqlite3 via jolt.ffi); the rest are
  ;; pure-Clojure libraries pulled straight from their git repos and run unchanged.
- :deps {ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
+ :deps {jolt-lang/ring-chez-adapter
+          {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
+           :git/sha "b0e5c3de0d6264c3cdea3a874a59768887657525"}
+        jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
+                      :git/sha "fe52f468d468c6cf86b2c9190c6a703cf4e0b149"}
+        ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
                         :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
                         :deps/root "ring-core"}
         ring/ring-codec {:git/url "https://github.com/ring-clojure/ring-codec"
@@ -30,7 +36,18 @@
           {:git/url "https://github.com/jolt-lang/logging"
            :git/sha "b4f2deb5cf9693b31fbff4f99fb46cc48691d49d"}}
 
+ ;; `joltc build -m app.core` bakes these dirs' files into the binary, so the
+ ;; Selmer template resolves via io/resource with no resources/ dir on disk. The
+ ;; binary loads the deps' :jolt/native libs (libc sockets, libsqlite3) at startup.
+ ;; config.edn is read via io/file at runtime, so it stays external (edit it
+ ;; without rebuilding).
+ :jolt/build {:embed ["resources"]}
+
  :aliases {:test {:extra-paths ["test"]
+                  ;; the test drives the running server with jolt.http-client
+                  :extra-deps {jolt-lang/http-client
+                               {:git/url "https://github.com/jolt-lang/http-client"
+                                :git/sha "0987145ac625e3e42c71f2f29726ae4279414363"}}
                   :main-opts ["-m" "app.core-test"]}}
 
  :tasks {run  {:doc "run the server" :main-opts ["-m" "app.core"]}

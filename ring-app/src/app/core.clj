@@ -1,8 +1,8 @@
 (ns app.core
   "A guestbook web app on jolt running the real JVM-style stack from git:
   ring-core middleware + reitit routing + Selmer HTML templates + yogthos/config
-  + honeysql queries — served by jolt's built-in HTTP server (BSD sockets via
-  FFI) over a SQLite guestbook (jolt's built-in jdbc.core / libsqlite3 binding).
+  + honeysql queries — served by the ring-chez-adapter HTTP server (BSD sockets
+  via FFI) over a SQLite guestbook (jolt's built-in jdbc.core / libsqlite3 binding).
 
   reitit reads its :clj branches, so the require below is scoped: reader features
   are switched to :clj only for that load, then restored. Everything else runs
@@ -13,7 +13,7 @@
             [clojure.java.io :as io]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
-            [jolt.http.server :as adapter]
+            [ring-chez.adapter :as adapter]
             [app.db :as db]))
 
 ;; Load reitit under :clj features, then restore — see the ns docstring.
