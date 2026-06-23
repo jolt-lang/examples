@@ -1,7 +1,7 @@
 # glimmer-app
 
-A standalone example app for [glimmer](../../glimmer) — a reagent-style reactive
-GUI toolkit over GTK4 for the [Jolt](https://github.com/jolt-lang) Clojure
+A standalone example app for [glimmer](https://github.com/jolt-lang/glimmer) — a reagent-style reactive
+GUI toolkit over GTK4 for the [Jolt](https://github.com/jolt-lang/jolt) Clojure
 dialect. It exercises the whole feature set in one cohesive app: a reactive task
 board.
 
