@@ -7,17 +7,6 @@
   re-renders. See glimmer's reconciler note in its README."
   (:require [glimmer.widget :as gw]))
 
-;; A read-only KPI tile: the caption rides the frame border, the value is a big
-;; bold number centered inside the bordered card. Pure — no reactive reads — so
-;; it only re-renders when its parent does.
-(defn stat-card [caption value tooltip]
-  [:frame {:label caption}
-   [:label {:markup (str "<span size='xx-large' weight='bold'>"
-                         value "</span>")
-            :tooltip tooltip
-            :halign :center :valign :center
-            :margin-top 6 :margin-bottom 10 :margin-start 16 :margin-end 16}]])
-
 ;; Three filter buttons driven by a cursor over [:filter], laid out as a
 ;; segmented control. The active filter's button is disabled (:sensitive false)
 ;; so it reads as the current selection. Each :on-click writes the cursor — a
@@ -28,7 +17,7 @@
                   [:button {:label     label
                             :sensitive (not= current kw)
                             :on-click  #(reset! filter-cursor kw)
-                            :tooltip   (str "show " label " tasks")}])]
+                            :tooltip   (str "show " label " todos")}])]
     [:hbox {:spacing 6 :homogeneous true :hexpand true}
      (button :all    "all")
      (button :active "active")
