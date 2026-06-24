@@ -34,7 +34,7 @@
         ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
         org.clojure/tools.logging
           {:git/url "https://github.com/jolt-lang/logging"
-           :git/sha "b4f2deb5cf9693b31fbff4f99fb46cc48691d49d"}}
+           :git/sha "7e26daaf4b91df3076c4c0342d0270fc962fca27"}}
 
  ;; `joltc build -m app.core` bakes these dirs' files into the binary, so the
  ;; Selmer template resolves via io/resource with no resources/ dir on disk. The
