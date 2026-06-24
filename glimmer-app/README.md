@@ -20,8 +20,12 @@ board.
   reactions once on mount, then renders from them.
 - **every event kind** — `:on-change` and `:on-activate` (entry), `:on-click`
   (buttons), `:on-toggled` (checkbutton).
-- **list rendering** driven by a reaction, with live counts and bulk mutations
-  (`complete all`, `clear done`).
+- **keyed list rendering** driven by a reaction — each row is keyed by task id,
+  so adding, deleting, reordering (sort), and filtering reuse the right widgets
+  instead of recreating by position.
+- **interactive rows** — every row has its own toggle checkbox and delete button
+  whose handlers close over the task id (not a list index), plus bulk mutations
+  (`complete all` / `mark all active`, `clear completed`) and live counts.
 
 ## Layout
 
@@ -53,8 +57,11 @@ installed (Homebrew on macOS: `brew install gtk4`).
 
 ## Design note
 
-Task rows are rendered read-only. glimmer's reconciler is positional and wires
-signals once at mount, so a row handler can't safely capture a per-item identity
-once filtering can shrink or reorder the list. All mutation therefore flows
-through global controls that close over the root atom. See glimmer's README for
-the reconciler limitation and the keyed-children roadmap.
+Task rows are keyed by task id (`[task-row {:key id} ...]`). glimmer's reconciler
+matches keyed children by identity rather than position, so a row's widgets and
+its once-wired signals follow the same task as the list is added to, deleted
+from, reordered (the done-last sort), or filtered. That's what lets each row own
+a toggle and delete handler bound to its id without ever capturing a stale index.
+Signals are still wired once at mount; the handlers close over the id and the
+root atom (stable), never over a position or a value. See glimmer's README for
+how keyed reconciliation works.

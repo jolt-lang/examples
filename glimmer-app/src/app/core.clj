@@ -11,11 +11,11 @@
   Events — :on-change / :on-activate (entry), :on-click (buttons),
   :on-toggled (checkbutton) all appear.
 
-  Rows are rendered read-only. glimmer's reconciler is positional and wires
-  signals once at mount, so a row handler can't safely capture a per-item
-  identity once filtering can shrink or reorder the list — see glimmer's README.
-  All mutation therefore flows through global controls that close over the root
-  atom.
+  Rows are keyed by task :id and interactive: each carries its own toggle and
+  delete handlers, bound to that id. glimmer's keyed reconciler matches rows by
+  :key, so a row's widgets and once-wired signals follow its task across
+  add/remove/reorder/filter instead of a stale position — exactly what makes a
+  dynamic todo list safe.
 
   Layout — the board is a fixed-width column: title + subtitle, framed KPI cards,
   a filter/sort row, a scrollable task list (rows wrap and cap their width so the
@@ -66,30 +66,34 @@
                           " tasks — try another filter.</span>"))
            :halign :center :margin 24}])
 
-(defn- task-list [visible total filter-val]
+(defn- task-list [visible total filter-val toggle-task delete-task]
   [:scrolled {:vexpand true
               :margin-start 14 :margin-end 14 :margin-top 12}
    [:vbox {:spacing 6 :margin 4}
     (if (seq visible)
-      (for [{:keys [text done]} visible]
-        [w/task-row text done])
+      (for [{:keys [id text done]} visible]
+        ;; {:key id} matches this row to its task by identity; the leading map is
+        ;; stripped before task-row is called. Handlers close over id, not index.
+        [w/task-row {:key id} text done
+         (fn [] (toggle-task id))
+         (fn [] (delete-task id))])
       [empty-state total filter-val])]])
 
-(defn- actions [remaining done-count complete-all clear-done]
+(defn- actions [total remaining done-count toggle-all clear-completed]
   [:hbox {:spacing 8}
-   [:button {:label     "complete all"
-             :on-click  complete-all
-             :sensitive (pos? remaining)
-             :tooltip   "mark every task done"}]
-   [:button {:label     "clear done"
-             :on-click  clear-done
+   [:button {:label     (if (and (pos? total) (zero? remaining)) "mark all active" "complete all")
+             :on-click  toggle-all
+             :sensitive (pos? total)
+             :tooltip   "toggle every task done / active"}]
+   [:button {:label     "clear completed"
+             :on-click  clear-completed
              :sensitive (pos? done-count)
              :tooltip   "remove completed tasks"}]])
 
-(defn- footer [draft-cursor on-add remaining done-count complete-all clear-done]
+(defn- footer [draft-cursor on-add total remaining done-count toggle-all clear-completed]
   [:vbox {:spacing 8 :margin 14}
    [w/command-bar draft-cursor on-add]
-   [actions remaining done-count complete-all clear-done]])
+   [actions total remaining done-count toggle-all clear-completed]])
 
 (defn task-board []
   ;; outer let runs once on mount: state, derived cursors/reactions, and the
@@ -129,9 +133,17 @@
                                                                :done false})
                                           (assoc :draft "")
                                           (update :next-id inc)))))))
-        complete-all (fn [] (swap! state update :tasks
-                                   #(mapv (fn [t] (assoc t :done true)) %)))
-        clear-done   (fn [] (swap! state update :tasks #(vec (remove :done %))))]
+        toggle-task  (fn [id]
+                       (swap! state update :tasks
+                              (fn [ts] (mapv (fn [t] (if (= (:id t) id) (update t :done not) t)) ts))))
+        delete-task  (fn [id]
+                       (swap! state update :tasks
+                              (fn [ts] (vec (remove (fn [t] (= (:id t) id)) ts)))))
+        toggle-all   (fn []
+                       (swap! state update :tasks
+                              (fn [ts] (let [target (not (every? :done ts))]
+                                         (mapv (fn [t] (assoc t :done target)) ts)))))
+        clear-completed (fn [] (swap! state update :tasks #(vec (remove :done %))))]
     ;; inner fn = render; re-runs when any reactive cell it derefs changes.
     (fn []
       (let [total (+ @remaining @done-count)]
@@ -140,9 +152,9 @@
          [:separator]
          [kpi-cards @remaining @done-count]
          [filter-row filter sort?]
-         [task-list @visible total @filter]
+         [task-list @visible total @filter toggle-task delete-task]
          [:separator]
-         [footer draft add-task @remaining @done-count complete-all clear-done]]))))
+         [footer draft add-task total @remaining @done-count toggle-all clear-completed]]))))
 
 (defn -main [& _]
   (ui/run task-board

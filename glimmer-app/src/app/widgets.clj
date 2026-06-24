@@ -34,19 +34,30 @@
      (button :active "active")
      (button :done   "done")]))
 
-;; A single read-only task line. The text is wrapped and its natural width is
-;; capped (:max-width-chars) so a long task can't push the window wider — the
-;; fix for the "grows wider on every add" bug. Completed tasks render struck
-;; through and muted via Pango markup; the text is escaped first.
-(defn task-row [text done]
+;; A single interactive task line: a checkbutton that toggles done, the wrapped
+;; text (struck through and muted when done), and a delete button. The handlers
+;; are passed in already bound to the task's id, and the row is mounted with a
+;; stable :key, so glimmer's keyed reconciler keeps each row's widgets and wired
+;; signals attached to the same task across add/remove/reorder/filter — the
+;; handlers can't capture a stale position. The text's natural width is capped
+;; (:max-width-chars) so a long task can't push the window wider.
+(defn task-row [text done on-toggle on-delete]
   (let [body (gw/escape-markup text)]
-    [:label {:markup (if done
-                       (str "☑  <span strikethrough='true' foreground='#9aa0ad'>" body "</span>")
-                       (str "☐  " body))
-             :wrap true
-             :max-width-chars 50
-             :hexpand true :halign :fill :xalign 0.0 :valign :start
-             :margin-top 2 :margin-bottom 2}]))
+    [:hbox {:spacing 8 :valign :center :margin-top 1 :margin-bottom 1}
+     [:checkbutton {:active     done
+                    :valign     :center
+                    :on-toggled on-toggle
+                    :tooltip    "toggle done"}]
+     [:label {:markup (if done
+                        (str "<span strikethrough='true' foreground='#9aa0ad'>" body "</span>")
+                        body)
+              :wrap true
+              :max-width-chars 44
+              :hexpand true :halign :fill :xalign 0.0 :valign :center}]
+     [:button {:label    "✕"
+               :on-click on-delete
+               :valign   :center
+               :tooltip  "delete this task"}]]))
 
 ;; The add bar: an entry bound to the draft cursor plus an add button. The entry
 ;; fills the available width (:hexpand/:halign :fill) so the button keeps a fixed
