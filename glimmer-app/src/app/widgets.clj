@@ -4,8 +4,11 @@
   re-renders just that component when a cell it derefs changes. Handlers close
   over reactive cells (cursors) and constants only — never over values captured
   by position — so they stay correct for the widget's life even as the list
-  re-renders. See glimmer's reconciler note in its README."
-  (:require [glimmer.widget :as gw]))
+  re-renders. See glimmer's reconciler note in its README.
+
+  Pango-styled labels use hiccup data in the :markup prop (e.g.
+  [:span {:foreground \"#9aa0ad\"} text]); glimmer renders and escapes it, so no
+  XML strings are hand-rolled here.")
 
 ;; Three filter buttons driven by a cursor over [:filter], laid out as a
 ;; segmented control. The active filter's button is disabled (:sensitive false)
@@ -31,22 +34,21 @@
 ;; handlers can't capture a stale position. The text's natural width is capped
 ;; (:max-width-chars) so a long task can't push the window wider.
 (defn task-row [text done on-toggle on-delete]
-  (let [body (gw/escape-markup text)]
-    [:hbox {:spacing 8 :valign :center :margin-top 1 :margin-bottom 1}
-     [:checkbutton {:active     done
-                    :valign     :center
-                    :on-toggled on-toggle
-                    :tooltip    "toggle done"}]
-     [:label {:markup (if done
-                        (str "<span strikethrough='true' foreground='#9aa0ad'>" body "</span>")
-                        body)
-              :wrap true
-              :max-width-chars 44
-              :hexpand true :halign :fill :xalign 0.0 :valign :center}]
-     [:button {:label    "✕"
-               :on-click on-delete
-               :valign   :center
-               :tooltip  "delete this task"}]]))
+  [:hbox {:spacing 8 :valign :center :margin-top 1 :margin-bottom 1}
+   [:checkbutton {:active     done
+                  :valign     :center
+                  :on-toggled on-toggle
+                  :tooltip    "toggle done"}]
+   [:label {:markup (if done
+                      [:span {:strikethrough "true" :foreground "#9aa0ad"} text]
+                      [:span text])
+            :wrap true
+            :max-width-chars 44
+            :hexpand true :halign :fill :xalign 0.0 :valign :center}]
+   [:button {:label    "✕"
+             :on-click on-delete
+             :valign   :center
+             :tooltip  "delete this task"}]])
 
 ;; The add bar: an entry bound to the draft cursor plus an add button. The entry
 ;; fills the available width (:hexpand/:halign :fill) so the button keeps a fixed

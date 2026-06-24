@@ -23,7 +23,7 @@
             [app.widgets :as w]))
 
 (defn- title []
-  [:label {:markup "<span size='30000' weight='bold' foreground='#b83f45'>todos</span>"
+  [:label {:markup [:span {:size "30000" :weight "bold" :foreground "#b83f45"} "todos"]
            :halign :center :margin-top 16 :margin-bottom 8}])
 
 ;; Toggle-all chevron + the add entry, on one row. The chevron flips every todo
@@ -38,11 +38,10 @@
    [w/command-bar draft-cursor on-add]])
 
 (defn- empty-state [total filter-val]
-  [:label {:markup (if (zero? total)
-                     "<span foreground='#8e939d'>No todos yet — add one above to get started.</span>"
-                     (str "<span foreground='#8e939d'>No "
-                          (name filter-val)
-                          " todos — try another filter.</span>"))
+  [:label {:markup [:span {:foreground "#8e939d"}
+                    (if (zero? total)
+                      "No todos yet — add one above to get started."
+                      (str "No " (name filter-val) " todos — try another filter."))]
            :halign :center :margin 24}])
 
 (defn- todo-list [visible total filter-val toggle-todo delete-todo]
@@ -59,7 +58,7 @@
       [empty-state total filter-val])]])
 
 (defn- count-markup [remaining]
-  (str "<b>" remaining "</b> item" (when (not= remaining 1) "s") " left"))
+  [:span [:b remaining] (str " item" (when (not= remaining 1) "s") " left")])
 
 ;; The footer: items-left count, the three filters, a done-last sort toggle, and
 ;; clear-completed. Two compact rows so nothing is cramped.
