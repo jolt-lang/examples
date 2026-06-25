@@ -1,184 +1,204 @@
 (ns gl-demo.core
-  "Fullscreen procedural plasma shader in a GtkGLArea, with a small GTK4
-   control panel.
+  "A rotating 3D solid painted with a procedural plasma shader in a GtkGLArea,
+   with a reactive glimmer control panel — the whole window is one glimmer hiccup
+   tree.
 
-   geom-gl supplies the GL shader plumbing; glimmer.ffi provides the raw GTK4
-   bindings; gl-demo.gtk adds the few GLArea + slider + tick-callback calls
-   glimmer omits; gl-demo.scene holds the GLSL.
+   Everything 3D is glimmer-gl data: glimmer-gl.primitives builds a
+   cube / sphere / tetrahedron as a mesh, glimmer-gl.mesh tessellates it to an
+   interleaved position+normal buffer, glimmer-gl.matrix supplies the
+   model-view-projection, and glimmer-gl.shader turns the data-defined shader
+   (see gl-demo.scene) into a GL program whose uniforms are set by name.
+   glimmer-gl.gtk registers the :gl-area and :scale widgets into glimmer, so the
+   panel and the GL pane sit in the same reactive tree.
 
-   The GLArea is imperative (its realize/render/resize signals build GL objects
-   and 'render' returns a gboolean), so it's driven with raw ffi callbacks
-   rather than glimmer's reactive reconciler. Per-frame animation runs through
-   gtk_widget_add_tick_callback: GTK passes the area pointer to every invocation,
-   so the redraw target is always valid (and the callback only fires while the
-   area is mapped + realized).
+   The GLArea is imperative — its realize/render/resize handlers build and drive
+   raw GL objects — so those are passed as plain fns on the [:gl-area] element. A
+   tick callback advances the clock (used for both rotation and the plasma) and
+   queues a redraw each frame.
 
    Run with: joltc -M:run"
-  (:require [geom-gl.gl    :as gl]
-            [glimmer.ffi   :as gtk]
-            [gl-demo.gtk   :as ext]
-            [gl-demo.scene :as scene]
-            [jolt.ffi      :as ffi]))
+  (:require [glimmer.core   :as ui]
+            [glimmer.ratom  :as r]
+            [glimmer-gl.gtk :as glx]        ; registers :gl-area + :scale
+            [glimmer-gl.gl  :as gl]
+            [glimmer-gl.mesh :as mesh]
+            [glimmer-gl.primitives :as p]
+            [glimmer-gl.matrix :as m]
+            [glimmer-gl.shader :as sh]
+            [gl-demo.scene  :as scene]
+            [jolt.ffi       :as ffi]))
 
-;; --- state -------------------------------------------------------------------
-;; Per-GLArea GL handles, keyed by the area widget pointer (the first arg every
-;; GTK signal handler receives).
+;; --- control state (reactive — the panel re-renders on change) ---------------
+(defonce shape   (r/atom :cube))
+(defonce speed   (r/atom 1.0))
+(defonce zoom    (r/atom 1.0))    ; model scale
+(defonce p-scale (r/atom 3.0))    ; plasma pattern frequency (u_scale)
+(defonce warp    (r/atom 0.5))    ; plasma domain-warp strength (u_warp)
+(defonce blend   (r/atom 0.5))    ; mix between the plasma and stripe modules (u_mix)
+(defonce smooth  (r/atom false))  ; per-vertex (smooth) vs per-face (flat) normals
+(defonce paused  (r/atom false))
+
+;; --- animation / GL state (plain atoms — not read by the panel) --------------
+(defonce clock    (atom 0.0))     ; drives rotation angle and plasma u_time
+(defonce viewport (atom [900 560]))
+;; Per-GLArea GL handles, keyed by the area widget pointer.
 (defonce gl-state (atom {}))
-;; Strong refs to every foreign-callable we hand to GTK, for process lifetime.
-(defonce retained-cbs (atom []))
 
-;; Animation + control state (touched only from the UI thread).
-(defonce time     (atom 0.0))
-(defonce speed    (atom 1.0))    ; multiplies time accumulation
-(defonce pattern-scale (atom 3.0))   ; u_scale: pattern frequency
-(defonce warp     (atom 0.5))    ; u_warp: domain-warp strength
-(defonce paused   (atom false))
-(defonce viewport (atom [800 606]))
+(def ^:private frame-dt 0.016)
+(def ^:private light [0.4 0.85 0.6])     ; directional light
 
-(def ^:private frame-dt 0.016)   ; ~60fps
+;; --- geometry ----------------------------------------------------------------
+(defn- build-mesh [shape]
+  (case shape
+    :sphere (p/sphere 1.0 28 18)
+    :tetra  (p/tetrahedron 1.35)
+    (p/cuboid 1.5)))
 
-;; --- GLArea signal handlers --------------------------------------------------
-(defn on-realize [area _data]
-  (ext/gtk-gl-area-make-current area)
-  (when-let [err (ext/gl-area-error-message area)]
+(defn- buffer-for [shape smooth?]
+  (mesh/->floats (build-mesh shape) {:shading (if smooth? :smooth :flat)}))
+
+;; --- GL plumbing -------------------------------------------------------------
+(def ^:private stride-bytes (* 6 (ffi/sizeof :float)))
+
+(defn- upload!
+  "(Re)fill the bound VBO from the mesh for `shape`/`smooth?`. Returns the vertex
+   count to draw."
+  [vbo shape smooth?]
+  (let [{:keys [data] vcount :count} (buffer-for shape smooth?)
+        ptr (gl/write-floats data)]
+    (gl/gl-bind-buffer gl/GL-ARRAY-BUFFER vbo)
+    (gl/gl-buffer-data gl/GL-ARRAY-BUFFER
+                       (* (count data) (ffi/sizeof :float))
+                       ptr gl/GL-STATIC-DRAW)
+    (ffi/free ptr)
+    vcount))
+
+(defn- setup-attribs!
+  "Wire the interleaved VBO to the shader's a_pos / a_normal attributes, using the
+   locations the compiled shader resolved."
+  [shader]
+  (let [pos (sh/attrib-loc shader :a_pos)
+        nrm (sh/attrib-loc shader :a_normal)]
+    (when (>= pos 0)
+      (gl/gl-enable-vertex-attrib-array pos)
+      ;; byte offsets pass as plain integers — jolt pointers are addresses
+      (gl/gl-vertex-attrib-pointer pos 3 gl/GL-FLOAT gl/GL-FALSE stride-bytes 0))
+    (when (>= nrm 0)
+      (gl/gl-enable-vertex-attrib-array nrm)
+      (gl/gl-vertex-attrib-pointer nrm 3 gl/GL-FLOAT gl/GL-FALSE stride-bytes
+                                   (* 3 (ffi/sizeof :float))))))
+
+;; --- GLArea handlers ---------------------------------------------------------
+(defn on-realize [area]
+  (glx/make-current area)
+  (when-let [err (glx/gl-area-error-message area)]
     (println "GLArea context error:" err))
-  (let [prog (gl/make-program scene/vs-source scene/fs-source)]
-    (if-not prog
+  (let [shader (try (sh/program scene/shader-spec)
+                    (catch Throwable _ nil))]
+    (if-not shader
       (println "gl-demo: failed to build GL program (see info log above)")
-      (let [id-ptr (ffi/alloc (ffi/sizeof :uint))]   ; glGen* write target, reused
-        (gl/gl-gen-vertex-arrays 1 id-ptr)
-        (let [vao (ffi/read id-ptr :uint)]
-          (ffi/free id-ptr)
-          ;; No vertex buffer / attributes: the fullscreen triangle is generated
-          ;; from gl_VertexID in the vertex shader. Core profile still requires a
-          ;; bound VAO, so we create one and leave it empty.
-          (gl/gl-bind-vertex-array vao)
-          (swap! gl-state assoc area
-                 {:program prog
-                  :vao     vao
-                  :loc-t   (gl/gl-get-uniform-location prog "u_time")
-                  :loc-s   (gl/gl-get-uniform-location prog "u_scale")
-                  :loc-w   (gl/gl-get-uniform-location prog "u_warp")})
-          (println "gl-demo: GL ready — program" prog "vao" vao))))))
+      (let [idp (ffi/alloc (ffi/sizeof :uint))]
+        (gl/gl-gen-vertex-arrays 1 idp)
+        (let [vao (ffi/read idp :uint)]
+          (gl/gl-gen-buffers 1 idp)
+          (let [vbo (ffi/read idp :uint)]
+            (ffi/free idp)
+            (gl/gl-enable gl/GL-DEPTH-TEST)
+            (gl/gl-bind-vertex-array vao)
+            (let [n (upload! vbo @shape @smooth)]
+              (setup-attribs! shader)
+              (swap! gl-state assoc area
+                     {:shader shader :vao vao :vbo vbo :count n
+                      :shape @shape :smooth @smooth})
+              (println "gl-demo: GL ready — program" (:program shader)
+                       "vao" vao "verts" n))))))))
 
-(defn on-resize [area width height _data]
-  (reset! viewport [width height])
-  (gl/gl-viewport 0 0 width height))
+(defn on-resize [_area w h]
+  (reset! viewport [w h])
+  (gl/gl-viewport 0 0 w h))
 
-(defn on-render [area _data]
-  (ext/gtk-gl-area-make-current area)   ; GTK4 already current; harmless + safe
-  (if-let [st (get @gl-state area)]
-    (let [prog (:program st)]
-      (gl/gl-clear-color 0.04 0.05 0.07 1.0)
-      (gl/gl-clear gl/GL-COLOR-BUFFER-BIT)
-      (gl/gl-use-program prog)
-      (gl/gl-uniform-1f (:loc-t st) (double @time))
-      (gl/gl-uniform-1f (:loc-s st) (double @pattern-scale))
-      (gl/gl-uniform-1f (:loc-w st) (double @warp))
+(defn on-render [area]
+  (when-let [st (get @gl-state area)]
+    ;; rebuild the VBO if the shape or shading changed since the last upload
+    (let [st (if (or (not= (:shape st) @shape) (not= (:smooth st) @smooth))
+               (let [n (upload! (:vbo st) @shape @smooth)
+                     st' (assoc st :count n :shape @shape :smooth @smooth)]
+                 (swap! gl-state assoc area st') st')
+               st)
+          shader (:shader st)
+          [w h]  @viewport
+          aspect (/ (double w) (max 1.0 (double h)))
+          t      (double @clock)
+          s      (double @zoom)
+          model  (m/mul (m/mul (m/rotate-y t) (m/rotate-x (* t 0.5)))
+                        (m/scaling s s s))
+          view   (m/translation 0.0 0.0 -4.5)
+          proj   (m/perspective 50.0 aspect 0.1 100.0)
+          mvp    (m/mul proj (m/mul view model))]
+      (gl/gl-clear-color 0.05 0.06 0.09 1.0)
+      (gl/gl-clear (bit-or gl/GL-COLOR-BUFFER-BIT gl/GL-DEPTH-BUFFER-BIT))
+      (gl/gl-use-program (:program shader))
+      (sh/set-uniforms! shader
+        {:u_mvp     mvp
+         :u_model   model
+         :u_time    t
+         :u_scale   @p-scale
+         :u_warp    @warp
+         :u_mix     @blend
+         :u_stripes 8.0
+         :u_light   light})
       (gl/gl-bind-vertex-array (:vao st))
-      ;; one oversized triangle covering the pane
-      (gl/gl-draw-arrays gl/GL-TRIANGLES 0 3))
-    1)   ; nothing built yet — realize will populate; keep rendering
-  1)     ; gboolean TRUE → we handled the render
+      (gl/gl-draw-arrays gl/GL-TRIANGLES 0 (:count st)))))
 
-;; gtk_widget_add_tick_callback: (GtkWidget*, GdkFrameClock*, gpointer) → gboolean.
-(defn on-tick [area _clock _data]
+(defn on-tick [_area]
   (when-not @paused
-    (swap! time + (* (double @speed) frame-dt)))
-  (ext/gtk-gl-area-queue-render area)
-  1)   ; gboolean TRUE → keep the callback alive
+    (swap! clock + (* (double @speed) frame-dt))))
 
-;; --- control panel -----------------------------------------------------------
-;; foreign-callable is a macro needing literal argtypes/rettype, so every
-;; callback is built inline; connect-cb just wires a pre-built pointer.
-(defn- retain [cb] (swap! retained-cbs conj cb) cb)
+;; --- reactive control panel --------------------------------------------------
+(defn- slider [label-text lo hi step value-atom]
+  [:hbox {:spacing 8}
+   [:label {:label label-text :width-chars 6 :xalign 0.0}]
+   [:scale {:min lo :max hi :step step :value @value-atom :digits 2 :hexpand true
+            :on-value #(reset! value-atom %)}]])
 
-(defn- connect-cb [widget signal cb]
-  (gtk/g-signal-connect-data widget signal cb
-    ffi/null ffi/null gtk/CONNECT-DEFAULT)
-  widget)
-
-(defn- slider [text min max step init on-change]
-  (let [row  (gtk/gtk-box-new ext/ORIENTATION-HORIZONTAL 6)
-        lbl  (gtk/gtk-label-new text)
-        ;; jolt's foreign-procedure needs inexact flonums for :double args
-        min  (double min)  max (double max)  step (double step)
-        scl  (ext/gtk-scale-new-with-range ext/ORIENTATION-HORIZONTAL min max step)
-        cb   (retain
-               (ffi/foreign-callable
-                 (fn [s _] (on-change (ext/gtk-range-get-value s)))
-                 [:pointer :pointer] :void :collect-safe))]
-    (gtk/gtk-widget-set-hexpand scl 1)
-    (gtk/gtk-widget-set-margin-end lbl 8)
-    (ext/gtk-range-set-value scl (double init))
-    (ext/gtk-scale-set-digits scl 2)
-    (gtk/gtk-box-append row lbl)
-    (gtk/gtk-box-append row scl)
-    (connect-cb scl "value-changed" cb)
-    row))
+(defn- shape-button [label kw]
+  [:button {:label label
+            :sensitive (not= @shape kw)        ; the active shape is greyed out
+            :on-click #(reset! shape kw)}])
 
 (defn- control-panel []
-  (let [panel (gtk/gtk-box-new ext/ORIENTATION-VERTICAL 6)]
-    (gtk/gtk-box-set-spacing panel 6)
-    (gtk/gtk-widget-set-margin-start panel 8)
-    (gtk/gtk-widget-set-margin-end panel 8)
-    (gtk/gtk-widget-set-margin-top panel 6)
-    (gtk/gtk-widget-set-margin-bottom panel 6)
-    (gtk/gtk-box-append panel
-      (slider "Speed" 0.0 3.0 0.05 @speed #(reset! speed %)))
-    (gtk/gtk-box-append panel
-      (slider "Scale" 0.5 8.0 0.1 @pattern-scale #(reset! pattern-scale %)))
-    (gtk/gtk-box-append panel
-      (slider "Warp" 0.0 1.5 0.05 @warp #(reset! warp %)))
-    (let [pause (gtk/gtk-button-new-with-label "Pause")
-          cb    (retain
-                  (ffi/foreign-callable
-                    (fn [b _]
-                      (swap! paused not)
-                      (gtk/gtk-button-set-label b (if @paused "Resume" "Pause")))
-                    [:pointer :pointer] :void :collect-safe))]
-      (gtk/gtk-box-append panel pause)
-      (connect-cb pause "clicked" cb))
-    (let [reset (gtk/gtk-button-new-with-label "Reset time")
-          cb    (retain
-                  (ffi/foreign-callable
-                    (fn [_ _] (reset! time 0.0))
-                    [:pointer :pointer] :void :collect-safe))]
-      (gtk/gtk-box-append panel reset)
-      (connect-cb reset "clicked" cb))
-    panel))
+  [:vbox {:spacing 6 :margin 8}
+   [:hbox {:spacing 6}
+    [shape-button "Cube" :cube]
+    [shape-button "Sphere" :sphere]
+    [shape-button "Tetra" :tetra]]
+   [slider "Speed" 0.0 4.0 0.05 speed]
+   [slider "Zoom"  0.3 2.5 0.05 zoom]
+   [slider "Scale" 0.5 8.0 0.1  p-scale]
+   [slider "Warp"  0.0 1.5 0.05 warp]
+   [slider "Blend" 0.0 1.0 0.05 blend]      ; plasma <-> stripes
+   [:hbox {:spacing 12}
+    [:checkbutton {:label "Smooth shading" :active @smooth
+                   :on-toggled #(swap! smooth not)}]
+    [:button {:label (if @paused "Resume" "Pause")
+              :on-click #(swap! paused not)}]]])
 
-;; --- app ---------------------------------------------------------------------
+(defn app []
+  [:vbox {:spacing 0}
+   [control-panel]
+   [:separator {}]
+   [:gl-area {:version [3 2] :depth-buffer true :hexpand true :vexpand true
+              :on-realize on-realize
+              :on-render  on-render
+              :on-resize  on-resize
+              :on-tick    on-tick}]])
+
 (defn -main [& _]
-  (let [app (gtk/gtk-application-new "dev.jolt.gldemo" gtk/APPLICATION-DEFAULT-FLAGS)
-        activate
-        (fn [app _]
-          (let [win    (gtk/gtk-application-window-new app)
-                root   (gtk/gtk-box-new ext/ORIENTATION-VERTICAL 0)
-                glarea (ext/gtk-gl-area-new)]
-            (gtk/gtk-window-set-title win "geom-gl • plasma shader")
-            (gtk/gtk-window-set-default-size win 800 600)
-            (ext/gtk-gl-area-set-required-version glarea 3 2)
-            (gtk/gtk-widget-set-vexpand glarea 1)
-            (gtk/gtk-widget-set-hexpand glarea 1)
-            (connect-cb glarea "realize"
-              (retain (ffi/foreign-callable on-realize [:pointer :pointer] :void :collect-safe)))
-            (connect-cb glarea "render"
-              (retain (ffi/foreign-callable on-render [:pointer :pointer] :int :collect-safe)))
-            (connect-cb glarea "resize"
-              (retain (ffi/foreign-callable on-resize [:pointer :int :int :pointer] :void :collect-safe)))
-            ;; Per-frame: GTK hands us the area pointer on every tick, so the
-            ;; redraw target is always the right (mapped, realized) object.
-            (ext/gtk-widget-add-tick-callback glarea
-              (retain (ffi/foreign-callable on-tick
-                       [:pointer :pointer :pointer] :int :collect-safe))
-              ffi/null ffi/null)
-            (gtk/gtk-box-append root (control-panel))
-            (gtk/gtk-box-append root glarea)
-            (gtk/gtk-window-set-child win root)
-            (gtk/gtk-window-present win)))]
-    (connect-cb app "activate"
-      (retain (ffi/foreign-callable activate [:pointer :pointer] :void :collect-safe)))
-    (let [code (gtk/g-application-run app 0 ffi/null)]
-      (when-not (zero? code)
-        (println "gl-demo: g_application_run exited with code" code)))))
+  ;; GLIMMER_GL_DEMO_QUIT_MS auto-closes the window after N ms (smoke testing);
+  ;; unset, the window stays open until closed.
+  (let [quit-ms (some-> (System/getenv "GLIMMER_GL_DEMO_QUIT_MS") Integer/parseInt)]
+    (apply ui/run app
+           :app-id "dev.jolt.glimmer-gl-demo"
+           :title  "glimmer-gl • plasma mesh"
+           :width  900 :height 640
+           (when quit-ms [:auto-quit-ms quit-ms]))))

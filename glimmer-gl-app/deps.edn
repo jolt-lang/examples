@@ -1,9 +1,9 @@
 {:paths ["src"]
 
- :deps {geom-gl/geom-gl {:local/root "../geom-gl"}
-        glimmer/glimmer {:local/root "../glimmer"}}
+ :deps {jolt-lang/glimmer-gl {:local/root "../../glimmer-gl"}
+        jolt-lang/glimmer    {:local/root "../../glimmer"}}
 
- ;; The native libraries — OpenGL (from geom-gl) and the GTK4/GLib stack
+ ;; The native libraries — OpenGL (from glimmer-gl) and the GTK4/GLib stack
  ;; (from glimmer) — are declared in those deps' :jolt/native entries and
  ;; merged automatically by jolt's dependency walk, so they are not repeated
  ;; here.
