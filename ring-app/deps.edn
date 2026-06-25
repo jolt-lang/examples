@@ -8,33 +8,35 @@
  :deps {jolt-lang/ring-chez-adapter
           {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
            :git/sha "b0e5c3de0d6264c3cdea3a874a59768887657525"}
-        jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
-                      :git/sha "fe52f468d468c6cf86b2c9190c6a703cf4e0b149"}
-        ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
-                        :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
-                        :deps/root "ring-core"}
-        ring/ring-codec {:git/url "https://github.com/ring-clojure/ring-codec"
-                         :git/sha "1b2bdf11bcd057720141124e5f33c6f3e2a46790"}
-        yogthos/config {:git/url "https://github.com/yogthos/config"
-                        :git/sha "e9076ad18fce0b24c72d317dd23c43766dd95c8c"}
-        yogthos/selmer {:git/url "https://github.com/yogthos/Selmer"
-                        :git/sha "fa4a42e77b48905f87b3bf0dc1c698f2c329c722"}
-        com.github.seancorfield/honeysql
-          {:git/url "https://github.com/seancorfield/honeysql"
-           :git/sha "726f899cb90514b153cef2dc657695a85883d16e"}
-        ;; reitit routing — needs JOLT_FEATURES with "clj" so reitit reads its
-        ;; :clj branches; jolt-lang/router mirrors the reitit.Trie Java class.
-        metosin/reitit-core {:git/url "https://github.com/metosin/reitit"
-                             :git/sha "5d5c965deb3c7c8d64b8dd636432eaa14f0324ec"
-                             :deps/root "modules/reitit-core"}
-        weavejester/meta-merge {:git/url "https://github.com/weavejester/meta-merge"
-                                :git/sha "c968c38baccd4219fe0ba592d89af37ea8e426bf"}
-        jolt-lang/router {:git/url "https://github.com/jolt-lang/router"
-                          :git/sha "d35a08560fd2b84faa5e4e1de3f0fb59fa6ce90f"}
-        ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
-        org.clojure/tools.logging
-          {:git/url "https://github.com/jolt-lang/logging"
-           :git/sha "7e26daaf4b91df3076c4c0342d0270fc962fca27"}}
+         jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
+                       :git/sha "fe52f468d468c6cf86b2c9190c6a703cf4e0b149"}
+         ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
+                         :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
+                         :deps/root "ring-core"}
+         ring/ring-codec {:git/url "https://github.com/ring-clojure/ring-codec"
+                          :git/sha "1b2bdf11bcd057720141124e5f33c6f3e2a46790"}
+         yogthos/selmer {:git/url "https://github.com/yogthos/Selmer"
+                         :git/sha "fa4a42e77b48905f87b3bf0dc1c698f2c329c722"}
+         com.github.seancorfield/honeysql
+           {:git/url "https://github.com/seancorfield/honeysql"
+            :git/sha "726f899cb90514b153cef2dc657695a85883d16e"}
+         ;; reitit routing — needs JOLT_FEATURES with "clj" so reitit reads its
+         ;; :clj branches; jolt-lang/router mirrors the reitit.Trie Java class.
+         metosin/reitit-core {:git/url "https://github.com/metosin/reitit"
+                              :git/sha "5d5c965deb3c7c8d64b8dd636432eaa14f0324ec"
+                              :deps/root "modules/reitit-core"}
+         weavejester/integrant {:git/url "https://github.com/weavejester/integrant"
+                                :git/sha "bcad6bcf35b62d3a32a453dc26b6d3a4d659dc01"}
+         weavejester/dependency {:git/url "https://github.com/weavejester/dependency"
+                                 :git/sha "45b3fd426352537f0213235a58f12c91b15ff845"}
+         weavejester/meta-merge {:git/url "https://github.com/weavejester/meta-merge"
+                                 :git/sha "c968c38baccd4219fe0ba592d89af37ea8e426bf"}
+         jolt-lang/router {:git/url "https://github.com/jolt-lang/router"
+                           :git/sha "d35a08560fd2b84faa5e4e1de3f0fb59fa6ce90f"}
+         ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
+         org.clojure/tools.logging
+           {:git/url "https://github.com/jolt-lang/logging"
+            :git/sha "7e26daaf4b91df3076c4c0342d0270fc962fca27"}}
 
  ;; `joltc build -m app.core` bakes these dirs' files into the binary, so the
  ;; Selmer template resolves via io/resource with no resources/ dir on disk. The

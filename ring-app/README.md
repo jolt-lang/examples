@@ -3,14 +3,14 @@
 A guestbook web app on jolt running the real JVM-style stack, every library
 pulled from its git repo and run unchanged: **ring-core** middleware (params,
 keyword-params), **reitit** routing, **Selmer** HTML templates, **honeysql**
-queries and **yogthos/config**. It's served by the **ring-chez-adapter** HTTP
+queries, wired together with **Integrant**. It's served by the **ring-chez-adapter** HTTP
 server (a minimal HTTP/1.1 server over BSD sockets via Chez's FFI), over a
 **SQLite** guestbook through `jdbc.core` (the **jolt-lang/db** API over
 `libsqlite3`). Logging is `clojure.tools.logging`.
 
 ```
 joltc run                       # listens on config.edn's :port (3000)
-PORT=8080 joltc run             # config.core/env: env beats config.edn
+PORT=8080 joltc run             # PORT beats config.edn (Integrant applies the override)
 joltc -M:test                   # rendering, routing, middleware, the guestbook
 ```
 
@@ -29,7 +29,7 @@ FFI + runtime. Git deps are fetched once into `~/.jolt/gitlibs`.
 | Routing        | git — `metosin/reitit` (+ `jolt-lang/router` Trie mirror)     |
 | Templates      | git — `yogthos/Selmer`                                        |
 | SQL            | git — `com.github.seancorfield/honeysql`                      |
-| Config         | git — `yogthos/config`                                        |
+| Lifecycle      | git — `weavejester/integrant` (+ `weavejester/dependency`)   |
 | Logging        | git — `org.clojure/tools.logging` (jolt-lang/logging port)    |
 
 ## Standalone binary
@@ -92,6 +92,6 @@ the template lazily on first render so the two modes stay distinct.)
 
 This is the Chez port. reitit reads its `:clj` branches, so the require is scoped
 to `:clj` reader features (see `app.core`); everything else runs under jolt's
-default feature set. clj-http-lite (used only by the test to drive the live
-server) throws on 4xx/5xx by default, so the test passes `:throw-exceptions
-false` to inspect the 404.
+default feature set. config.edn is an Integrant graph wired with `#ig/ref`;
+`-main` starts the system with `ig/init`, and the test drives an in-memory
+system through the same keys, hitting the live `:app/server` over HTTP.

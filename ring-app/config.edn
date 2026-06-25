@@ -1,11 +1,19 @@
-{:port 3000
- :database-url "guestbook.sqlite3"
- :name "Jolt"
- :motd "ring-core + reitit + Selmer + honeysql + config, all from deps.edn, on jolt's native HTTP server + SQLite"
- :features ["ring middleware (params, keyword-params)"
-            "reitit routing"
-            "Selmer HTML templates"
-            "honeysql queries"
-            "yogthos/config (PORT env overrides :port)"
-            "jolt's built-in HTTP server (BSD sockets via FFI)"
-            "a SQLite guestbook (jdbc.core / libsqlite3)"]}
+;; Integrant owns the config: this file is a graph keyed by component, wired with
+;; #ig/ref and read at startup by integrant.core/read-string (see app.core).
+{:app/config   {:port 3000
+                :database-url "guestbook.sqlite3"
+                :name "Jolt"
+                :motd "ring-core + reitit + Selmer + honeysql, wired with Integrant, on jolt's native HTTP server + SQLite"
+                :features ["ring middleware (params, keyword-params)"
+                           "reitit routing"
+                           "Selmer HTML templates"
+                           "honeysql queries"
+                           "Integrant lifecycle (config -> db -> handler -> server)"
+                           "jolt's built-in HTTP server (BSD sockets via FFI)"
+                           "a SQLite guestbook (jdbc.core / libsqlite3)"]}
+
+ :app/db       {:config #ig/ref :app/config}
+ :app/handler  {:config #ig/ref :app/config
+                :db     #ig/ref :app/db}
+ :app/server   {:handler #ig/ref :app/handler
+                :config  #ig/ref :app/config}}
