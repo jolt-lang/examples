@@ -1,12 +1,18 @@
 # ring-app
 
 A guestbook web app on jolt running the real JVM-style stack, every library
-pulled from its git repo and run unchanged: **ring-core** middleware (params,
-keyword-params), **reitit** routing, **Selmer** HTML templates, **honeysql**
-queries, wired together with **Integrant**. It's served by the **ring-chez-adapter** HTTP
+pulled from its git repo and run unchanged: **ring-defaults** (params, static
+resources + content-type, session, security headers), **reitit** routing,
+**Selmer** HTML templates, **honeysql** queries, **tick** for the timestamps,
+wired together with **Integrant**. It's served by the **ring-chez-adapter** HTTP
 server (a minimal HTTP/1.1 server over BSD sockets via Chez's FFI), over a
 **SQLite** guestbook through `jdbc.core` (the **jolt-lang/db** API over
 `libsqlite3`). Logging is `clojure.tools.logging`.
+
+The CSS under `resources/public` is served by ring-defaults' static-resource +
+content-type middleware (with the right `text/css` MIME). ring-defaults' session
+and CSRF middleware needs `javax.crypto`, which **jolt-lang/jolt-crypto** supplies
+over the system OpenSSL — so the whole `site-defaults` stack loads and runs.
 
 ```
 joltc run                       # listens on config.edn's :port (3000)
@@ -25,9 +31,11 @@ FFI + runtime. Git deps are fetched once into `~/.jolt/gitlibs`.
 | ---            | ---                                                           |
 | HTTP server    | git — `jolt-lang/ring-chez-adapter` (BSD sockets via FFI)     |
 | Database       | git — `jolt-lang/db` / `jdbc.core` (libsqlite3 via FFI)       |
-| Middleware     | git — `ring/ring-core`, `ring/ring-codec`                     |
+| Middleware     | git — `ring/ring-defaults` (+ ring-core/codec/ssl/headers)    |
+| Crypto         | git — `jolt-lang/jolt-crypto` (OpenSSL, for sessions/CSRF)    |
 | Routing        | git — `metosin/reitit` (+ `jolt-lang/router` Trie mirror)     |
 | Templates      | git — `yogthos/Selmer`                                        |
+| Date/time      | git — `juxt/tick` (over jolt's `java.time`)                   |
 | SQL            | git — `com.github.seancorfield/honeysql`                      |
 | Lifecycle      | git — `weavejester/integrant` (+ `weavejester/dependency`)   |
 | Logging        | git — `org.clojure/tools.logging` (jolt-lang/logging port)    |
@@ -85,13 +93,14 @@ the template lazily on first render so the two modes stay distinct.)
 
 ## Requirements
 
-- `joltc` on PATH, and the system `libsqlite3` (preinstalled on macOS and most
-  Linux distros).
+- `joltc` on PATH, the system `libsqlite3` (preinstalled on macOS and most Linux
+  distros), and OpenSSL (`libssl`/`libcrypto`) for jolt-crypto.
 
 ## Notes
 
-This is the Chez port. reitit reads its `:clj` branches, so the require is scoped
-to `:clj` reader features (see `app.core`); everything else runs under jolt's
-default feature set. config.edn is an Integrant graph wired with `#ig/ref`;
+This is the Chez port. reitit and tick read their `:clj` branches, so those
+requires are scoped to `:clj` reader features (see `app.core`); everything else
+runs under jolt's default feature set. ring-defaults' session-cookie store needs
+`javax.crypto` at load, so `app.core` requires `jolt.crypto` first. config.edn is an Integrant graph wired with `#ig/ref`;
 `-main` starts the system with `ig/init`, and the test drives an in-memory
 system through the same keys, hitting the live `:app/server` over HTTP.

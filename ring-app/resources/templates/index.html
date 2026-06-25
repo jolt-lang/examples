@@ -2,23 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{name}} — ring on jolt</title>
+    <link rel="stylesheet" href="/css/style.css">
   </head>
   <body>
-    <h1>Hello {{name|upper}}!</h1>
-    {% if motd %}<p class="motd">{{motd}}</p>{% endif %}
-    <ul>
-      {% for f in features %}<li>{{f}}</li>
-      {% endfor %}
-    </ul>
-    <form action="/sign" method="post">
-      <input name="name" placeholder="your name">
-      <button type="submit">sign the guestbook</button>
-    </form>
-    <h2>{{count}} signatures</h2>
-    <ol class="guestbook">
-      {% for g in greetings %}<li>{{g.name}} <small>{{g.created-at}}</small></li>
-      {% endfor %}
-    </ol>
+    <main>
+      <h1>Hello <span class="accent">{{name|upper}}</span>!</h1>
+      {% if motd %}<p class="motd">{{motd}}</p>{% endif %}
+      <ul class="stack">
+        {% for f in features %}<li>{{f}}</li>
+        {% endfor %}
+      </ul>
+      <form action="/sign" method="post">
+        <input name="name" placeholder="your name" autofocus>
+        <button type="submit">sign the guestbook</button>
+      </form>
+      <h2>{{count}} signatures</h2>
+      <ol class="guestbook">
+        {% for g in greetings %}<li><span class="who">{{g.name}}</span> <time>{{g.created_at}}</time></li>
+        {% endfor %}
+      </ol>
+    </main>
   </body>
 </html>

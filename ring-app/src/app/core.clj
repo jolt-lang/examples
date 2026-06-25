@@ -10,23 +10,37 @@
   with ig/init and stopped with ig/halt!. PORT / DATABASE_URL env vars override
   config.edn (applied in the :app/config init-key).
 
-  reitit reads its :clj branches, so the require below is scoped: reader features
-  are switched to :clj only for that load, then restored. Everything else runs
-  under jolt's default feature set, and the app serves under default features."
+  reitit and tick read their :clj branches, so those requires are scoped: reader
+  features are switched to :clj only for that load, then restored. Everything else
+  runs under jolt's default feature set, and the app serves under default features.
+
+  jolt.crypto (OpenSSL-backed javax.crypto shims) is required before ring-defaults
+  so ring-core's encrypted session-cookie store loads; ring-defaults then wraps the
+  handler with params + static-resource + content-type + session middleware, so the
+  CSS under resources/public is served with the right MIME type."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.tools.logging :as log]
             [integrant.core :as ig]
             [selmer.parser :as selmer]
-            [ring.middleware.params :refer [wrap-params]]
-            [ring.middleware.keyword-params :refer [wrap-keyword-params]]
+            [jolt.crypto]
+            [ring.middleware.defaults :as defaults]
             [ring-chez.adapter :as adapter]
             [app.db :as db]))
 
-;; Load reitit under :clj features, then restore — see the ns docstring.
+;; Load reitit + tick under :clj features, then restore — see the ns docstring.
 (let [prev (__reader-features)]
   (__reader-features-set! ["clj" "jolt" "default"])
-  (require '[reitit.trie-jolt] '[reitit.core :as reitit])
+  (require '[reitit.trie-jolt] '[reitit.core :as reitit] '[tick.core :as t])
   (__reader-features-set! prev))
+
+;; SQLite's CURRENT_TIMESTAMP is "yyyy-MM-dd HH:mm:ss" (UTC). Parse it with tick
+;; and render a friendlier form; fall back to the raw string if it doesn't parse.
+(defn format-time [s]
+  (try
+    (t/format (t/formatter "d MMM yyyy, HH:mm 'UTC'")
+              (t/date-time (str/replace (str s) " " "T")))
+    (catch Throwable _ s)))
 
 ;; Loaded on first render, not at namespace load — so io/resource resolves at
 ;; runtime against the live source roots. In a standalone binary that's either
@@ -39,7 +53,8 @@
                   :motd      (:motd config)
                   :features  (:features config)
                   :count     (if db (db/greeting-count db) 0)
-                  :greetings (if db (db/recent-greetings db 10) [])}))
+                  :greetings (map #(update % :created_at format-time)
+                                  (if db (db/recent-greetings db 10) []))}))
 
 (defn wrap-log [handler]
   (fn [{:keys [request-method uri] :as request}]
@@ -82,7 +97,14 @@
                              {:status 404
                               :headers {"Content-Type" "text/plain"}
                               :body "not found\n"}))]
-    (-> handler wrap-keyword-params wrap-params wrap-log)))
+    ;; ring-defaults' site stack: params + keyword-params, static resources from
+    ;; resources/public (serving /css/style.css with the right MIME), content-type,
+    ;; session, and security headers. Anti-forgery is off so the plain POST form
+    ;; signs without a CSRF token.
+    (-> handler
+        (defaults/wrap-defaults
+          (-> defaults/site-defaults (assoc-in [:security :anti-forgery] false)))
+        wrap-log)))
 
 ;; --- Integrant components ---------------------------------------------------
 ;; config.edn's graph: :app/config -> {:app/db :app/handler} -> :app/server.

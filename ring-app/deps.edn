@@ -7,14 +7,40 @@
  ;; pure-Clojure libraries pulled straight from their git repos and run unchanged.
  :deps {jolt-lang/ring-chez-adapter
           {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-           :git/sha "b0e5c3de0d6264c3cdea3a874a59768887657525"}
+           :git/sha "fc17e5f253227ece508062681cea38402b679823"}
          jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
                        :git/sha "fe52f468d468c6cf86b2c9190c6a703cf4e0b149"}
+         ;; crypto (AES/HMAC/SecureRandom over OpenSSL) so ring-defaults' session
+         ;; + CSRF middleware loads. Shared with http-client; jolt.deps reconciles
+         ;; the duplicate libssl/libcrypto natives to a single load.
+         jolt-lang/jolt-crypto {:git/url "https://github.com/jolt-lang/jolt-crypto"
+                                :git/sha "0adae49db6064180374ffdcfc72b5b9ac01888cd"}
          ring/ring-core {:git/url "https://github.com/ring-clojure/ring"
                          :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
                          :deps/root "ring-core"}
          ring/ring-codec {:git/url "https://github.com/ring-clojure/ring-codec"
                           :git/sha "1b2bdf11bcd057720141124e5f33c6f3e2a46790"}
+         ;; ring-defaults bundles a sensible middleware stack (params, static
+         ;; resources + content-type, session, security headers). Its transitive
+         ;; ring libraries are Maven-only, so jolt needs them declared as git deps.
+         ring/ring-defaults {:git/url "https://github.com/ring-clojure/ring-defaults"
+                             :git/sha "39bb99fbacc4fdc85932e525a4e76556f73ba88c"}
+         ring/ring-ssl {:git/url "https://github.com/ring-clojure/ring-ssl"
+                        :git/sha "2f2930527358eb80b1be62f4f680b82a87af844a"}
+         ring/ring-headers {:git/url "https://github.com/ring-clojure/ring-headers"
+                            :git/sha "a2d7af5b946f2b5aead9273be2c8ef4c9d43527b"}
+         ring/ring-anti-forgery {:git/url "https://github.com/ring-clojure/ring-anti-forgery"
+                                 :git/sha "e85a1ecca38de6a2968e3d8f78fad3e1dba47b47"}
+         crypto-equality/crypto-equality {:git/url "https://github.com/weavejester/crypto-equality"
+                                          :git/sha "e62f63882c9d25694ba8c53ed6b108b2813175ea"}
+         crypto-random/crypto-random {:git/url "https://github.com/weavejester/crypto-random"
+                                      :git/sha "44dea07b802c34c1d8a7cefeb0c004216d285ac4"}
+         ring/ring-websocket-protocols {:git/url "https://github.com/ring-clojure/ring"
+                                        :git/sha "43478d1daa7f03fdbfc943304c66b32ab96b4961"
+                                        :deps/root "ring-websocket-protocols"}
+         org.ring-clojure/ring-websocket-middleware
+           {:git/url "https://github.com/ring-clojure/ring-websocket-middleware"
+            :git/sha "35b4f1ed6a28a2af4bb0c04b905edbe50a594038"}
          yogthos/selmer {:git/url "https://github.com/yogthos/Selmer"
                          :git/sha "fa4a42e77b48905f87b3bf0dc1c698f2c329c722"}
          com.github.seancorfield/honeysql
@@ -33,23 +59,30 @@
                                  :git/sha "c968c38baccd4219fe0ba592d89af37ea8e426bf"}
          jolt-lang/router {:git/url "https://github.com/jolt-lang/router"
                            :git/sha "d35a08560fd2b84faa5e4e1de3f0fb59fa6ce90f"}
+         ;; tick date/time (over jolt's java.time) + its cljc.java-time / time-
+         ;; literals deps; needs JOLT_FEATURES "clj" for the :clj reader branches.
+         juxt/tick {:git/url "https://github.com/juxt/tick"
+                    :git/sha "3c2cc4e809c21476f63470cd3e5cb2ff8fa5ef69"}
+         com.widdindustries/cljc.java-time {:git/url "https://github.com/henryw374/cljc.java-time"
+                                            :git/sha "652f64fef7185a080200d7d1696e26958791ff02"}
+         com.widdindustries/time-literals {:git/url "https://github.com/henryw374/time-literals"
+                                           :git/sha "463e52e23abd1a6fc2e033934a104b1fac3d0f9e"
+                                           :deps/root "temporal"}
          ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
          org.clojure/tools.logging
            {:git/url "https://github.com/jolt-lang/logging"
             :git/sha "7e26daaf4b91df3076c4c0342d0270fc962fca27"}}
 
  ;; `joltc build -m app.core` bakes these dirs' files into the binary, so the
- ;; Selmer template resolves via io/resource with no resources/ dir on disk. The
- ;; binary loads the deps' :jolt/native libs (libc sockets, libsqlite3) at startup.
- ;; config.edn is read via io/file at runtime, so it stays external (edit it
- ;; without rebuilding).
+ ;; Selmer template + CSS resolve via io/resource with no resources/ dir on disk.
+ ;; config.edn is read via io/file at runtime, so it stays external.
  :jolt/build {:embed ["resources"]}
 
  :aliases {:test {:extra-paths ["test"]
                   ;; the test drives the running server with jolt.http-client
                   :extra-deps {jolt-lang/http-client
                                {:git/url "https://github.com/jolt-lang/http-client"
-                                :git/sha "0987145ac625e3e42c71f2f29726ae4279414363"}}
+                                :git/sha "a4d1ffb9ea2771baf390d9c99a4332926843451f"}}
                   :main-opts ["-m" "app.core-test"]}}
 
  :tasks {run  {:doc "run the server" :main-opts ["-m" "app.core"]}
