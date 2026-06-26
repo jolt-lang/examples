@@ -1,38 +1,59 @@
 (ns gl-demo.check
-  "Headless sanity check: confirms the data-defined shader renders to GLSL with
-   its declarations generated, the glimmer-gl geometry pipeline produces a
-   well-formed vertex buffer for each shape, and the glimmer-gl.gtk extension
-   loads (its :gl-area / :scale widgets register into glimmer). Needs no GL
-   context and no display. Run with `joltc -M:check`."
-  (:require [clojure.string :as str]
-            [gl-demo.scene :as scene]
-            [glimmer-gl.shader :as sh]
-            [glimmer-gl.primitives :as p]
-            [glimmer-gl.mesh :as mesh]
-            [glimmer.widget :as w]
-            [glimmer-gl.gtk]))            ; loading registers the widgets
-
-(defn- check-shape [label m]
-  (let [{:keys [data count stride]} (mesh/->floats m {:shading :smooth})]
-    (println (format "  %-7s faces=%d tris=%d verts=%d floats=%d stride=%d"
-                     label (clojure.core/count (mesh/faces m))
-                     (clojure.core/count (mesh/triangles m))
-                     count (clojure.core/count data) stride))
-    (assert (pos? count) (str label " produced no vertices"))
-    (assert (= (clojure.core/count data) (* count stride)) "buffer layout mismatch")))
+  "Headless verification (no GL context, no display) that the declarative scene
+  compiles to a render plan, the depth + lit shaders emit the expected GLSL
+  (shadow sampler, fog, the two attrib locations), and the gothic geometry
+  produces meshes whose materials all resolve. Real GL is exercised only at
+  runtime via core.clj; this is the smoke test that catches data/shape bugs."
+  (:require [clojure.string   :as str]
+            [gl-demo.scene     :as scene]
+            [gl-demo.gothic    :as gothic]
+            [gl-demo.renderer  :as renderer]
+            [glimmer-gl.shader  :as sh]
+            [glimmer-gl.matrix  :as m]
+            [glimmer-gl.scene   :as gscene]
+            [glimmer-gl.mesh    :as mesh]
+            [glimmer.widget     :as w]
+            [glimmer-gl.gtk]))                       ; side-effect: widget registry
 
 (defn -main [& _]
-  (let [{:keys [vs-src fs-src]} (sh/sources scene/shader-spec)]
-    (println "shader: vs" (count vs-src) "chars, fs" (count fs-src) "chars")
-    (assert (str/includes? vs-src "layout(location=0) in vec3 a_pos;") "a_pos attrib missing")
-    (assert (str/includes? fs-src "uniform float u_time;") "u_time uniform missing")
-    (assert (str/includes? fs-src "vec3 palette(") "palette snippet missing")
-    (assert (str/includes? fs-src "float plasma(") "plasma snippet missing"))
-  (println "geometry:")
-  (check-shape "cube"   (p/cuboid 1.5))
-  (check-shape "sphere" (p/sphere 1.0 28 18))
-  (check-shape "tetra"  (p/tetrahedron 1.35))
-  (println "widgets registered:"
-           (every? #(contains? @w/specs %) [:gl-area :scale]))
-  (assert (every? #(contains? @w/specs %) [:gl-area :scale]) "widgets not registered")
+  ;; compile-check the app modules that need a GL context at runtime: requiring
+  ;; them catches symbol/arity errors without starting the GUI.
+  (require 'gl-demo.renderer)
+  (require 'gl-demo.core)
+  ;; --- shaders emit the expected GLSL ---------------------------------------
+  (let [{dvs :vs-src dfs :fs-src} (sh/sources scene/depth-spec)
+        {lvs :vs-src lfs :fs-src} (sh/sources scene/lit-spec)]
+    (println "depth shader: vs" (count dvs) "chars  fs" (count dfs) "chars")
+    (assert (str/includes? dvs "gl_Position = u_mvp") "depth shader must transform a_pos by u_mvp")
+    (println "lit shader:   vs" (count lvs) "chars  fs" (count lfs) "chars")
+    (assert (str/includes? lvs "layout(location=0) in vec3 a_pos;")   "lit shader: a_pos attrib @ loc 0")
+    (assert (str/includes? lvs "layout(location=1) in vec3 a_normal;") "lit shader: a_normal attrib @ loc 1")
+    (assert (str/includes? lvs "uniform sampler2DShadow u_shadow_map;")  "lit shader: shadow sampler uniform")
+    (assert (str/includes? lfs "texture(u_shadow_map")                   "lit shader: shadow lookup")
+    (assert (str/includes? lfs "u_fog_far")                               "lit shader: distance fog"))
+  ;; --- declarative scene -> render plan -------------------------------------
+  (let [plan   (gscene/flatten
+                 (gscene/group (m/ident)
+                   (gscene/camera {:eye [0 5 16] :target [0 4 -8] :up [0 1 0]
+                                   :fov 55 :near 0.1 :far 200})
+                   (gscene/light {:dir [-0.5 -0.6 -0.5] :color [1 0.95 0.82]})
+                   (gothic/cathedral)))
+        items  (:items plan)
+        unique (into #{} (map :geom items))
+        tris   (reduce + (map (fn [g] (count (mesh/triangles g))) unique))]
+    (println "gothic scene:")
+    (println (format "  items=%d  unique meshes=%d  triangles=%d  lights=%d  camera=%s"
+                     (count items) (count unique) tris (count (:lights plan))
+                     (some? (:camera plan))))
+    (assert (pos? (count items)) "scene produced no render items")
+    (assert (:camera plan)       "scene has no camera")
+    (assert (= 1 (count (:lights plan))) "scene should have exactly one light")
+    (let [used (into #{} (map :material items))]
+      (assert (every? #(contains? renderer/material-colors %) used)
+              (str "unresolved materials: " used))
+      (println "  materials:" (str/join " " (sort used)))))
+  ;; --- glimer widget specs registered ---------------------------------------
+  (let [registered (every? #(contains? @w/specs %) [:gl-area :scale])]
+    (println "widgets registered:" registered)
+    (assert registered "gl-area/scale widget specs not registered"))
   (println "check: ok"))

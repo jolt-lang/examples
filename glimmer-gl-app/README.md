@@ -1,50 +1,42 @@
 # glimmer-gl demo
 
-A GTK4 app that renders a rotating 3D solid — cube, sphere, or tetrahedron —
-painted with **two composed procedural shaders** (a domain-warped plasma and
-animated gold stripes) in a `GtkGLArea`, with a reactive control panel. It ties
-the two sibling libraries together: the UI is built with **glimmer**
-(reagent-style hiccup components), and the geometry, matrices, shader, and GL
-plumbing come from **glimmer-gl**.
+A GTK4 app that renders a **lit gothic cathedral with real-time shadows** in a
+`GtkGLArea`, driven by a reactive control panel. It exercises the two sibling
+libraries together: the UI is **glimmer** (reagent-style hiccup over
+`glimmer.ratom` cells), and the geometry, matrices, shader, and GL plumbing
+come from **glimmer-gl**.
 
 The whole window is one glimmer hiccup tree. `glimmer-gl.gtk` registers a
-`:gl-area` and `:scale` widget into glimmer, so the slider panel and the GL pane
-are reconciled together; there is no raw FFI in the app for the UI. The mesh is
-composed from `glimmer-gl.primitives` data, tessellated by `glimmer-gl.mesh` to
-an interleaved position+normal buffer, and drawn with a model-view-projection
-wound from `glimmer-gl.matrix`. The shader is **data**: `gl-demo.scene` defines a
-plasma module and a stripes module — each a map with its own uniforms and GLSL
-function — and combines them with `glimmer-gl.shader/merge-specs` into one
-program whose uniforms are set by name. The **Blend** slider mixes between the
-two effects.
+`:gl-area` and `:scale` widget into glimmer, so the slider panel and the GL
+pane are reconciled together — no raw FFI in the app for the UI. The 3D world
+is a *declarative scene tree* (a camera + light + cathedral built from
+`glimmer-gl.scene` nodes); `on-render` flattens it to a render plan and hands
+it to the renderer, which is the only place raw GL draw calls live.
 
 ## Run
 
 From this directory:
 
 ```sh
-joltc -M:run
+joltc -M:run            # opens the window
+GLIMMER_GL_DEMO_QUIT_MS=3000 joltc -M:run   # smoke test: auto-close after 3s
 ```
 
-A window opens with a control panel above the GL pane:
+The control panel above the GL pane:
 
-- **Cube / Sphere / Tetra** — pick the solid (the active one is greyed out). The
-  VBO is rebuilt from glimmer-gl primitives when you switch.
-- **Speed** — rotation / plasma animation rate (0 freezes).
-- **Zoom** — model scale.
-- **Scale** — plasma pattern frequency.
-- **Warp** — plasma domain-warp strength.
-- **Blend** — mix between the plasma and the stripe shader (0 = plasma, 1 = stripes).
-- **Smooth shading** — per-vertex averaged normals (rounded) vs per-face normals
-  (faceted).
-- **Pause / Resume** — freeze the clock.
+- **light azimuth / elevation** — sun direction (the shadow recasts live).
+- **ambient** — fill light intensity.
+- **shadow bias** — offsets the depth comparison to kill shadow acne.
+- **camera orbit** — orbits the camera around the cathedral.
+- **auto-rotate** — toggles continuous camera orbit.
+- **paused** — freezes the frame clock.
 
 ## Headless sanity check
 
-`gl-demo.check` has no GL or display dependency: it confirms the composed shader
-renders to GLSL (palette + plasma snippets present, declarations generated), the
-glimmer-gl geometry pipeline produces a well-formed vertex buffer for each shape,
-and the glimmer-gl.gtk widgets register into glimmer.
+`gl-demo.check` has no GL or display dependency: it confirms both shaders emit
+GLSL (the lit shader carries the shadow sampler and fog uniforms), the gothic
+scene flattens to a valid render plan (meshes, triangles, lights, camera), all
+materials resolve, and the `glimmer-gl.gtk` widgets register into glimmer.
 
 ```sh
 joltc -M:check
@@ -52,19 +44,24 @@ joltc -M:check
 
 ## How it's wired
 
-- `gl-demo.scene` — the shader as data. A `base` (vertex stage + framing
-  uniforms), a `plasma-module` and a `stripes-module` (each a map with its own
-  uniforms and a GLSL function), and a `main-module` that blends the two by
-  `u_mix` and lights the result, combined with `merge-specs`. Drop a module from
-  the merge, or add a third, to change the look — it's just data.
-- `gl-demo.core` — the app. The reactive panel (`control-panel`, `slider`,
-  `shape-button`) is plain glimmer hiccup over `glimmer.ratom` cells. The GLArea
-  is imperative, so its `on-realize`/`on-render`/`on-resize`/`on-tick` handlers
-  are passed as fns on the `[:gl-area …]` element; `glimmer-gl.gtk` wires them to
-  the GTK signals. `on-realize` builds the program/VAO/VBO and uploads the mesh;
-  `on-render` rebuilds the VBO when the shape or shading changes, then sets the
-  uniforms by name and draws; `on-tick` advances the clock (rotation + plasma
-  time) and queues a redraw each frame.
+- `gl-demo.scene` — the shaders as data. `depth-spec` is the depth-only
+  program used by the shadow pass; `lit-spec` is the lit program that samples
+  the shadow map and applies fog + ambient. Both are plain maps; edit the
+  GLSL fragments to change the look.
+- `gl-demo.gothic` — the cathedral: floor, pillars, arches, and ornaments
+  assembled as `glimmer-gl.scene` group nodes from `glimmer-gl.primitives`
+  and `glimmer-gl.polyhedra` meshes, each tagged with a material
+  (`:dark-stone`, `:glass`, `:gold`, `:ground`, `:stone`).
+- `gl-demo.renderer` — the GL renderer. Builds the shadow framebuffer and
+  both shader programs on realize; each frame runs a **shadow pass** (render
+  the scene depth from the light's point of view into the shadow map) then a
+  **lit pass** (draw the scene to the default framebuffer, sampling the
+  shadow map). Mesh VBOs are cached and uploaded once per unique mesh.
+- `gl-demo.core` — the app. The reactive panel is plain glimmer hiccup over
+  `glimmer.ratom` cells. The GLArea is imperative, so its
+  `on-realize`/`on-render`/`on-resize`/`on-tick` handlers are passed as fns
+  on the `[:gl-area …]` element; `glimmer-gl.gtk` wires them to the GTK
+  signals.
 
 The native libraries — OpenGL (from glimmer-gl) and the GTK4/GLib stack (from
 glimmer) — are pulled in transitively; `deps.edn` only lists the two local deps.

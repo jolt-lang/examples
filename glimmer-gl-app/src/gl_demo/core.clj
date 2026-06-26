@@ -1,186 +1,123 @@
 (ns gl-demo.core
-  "A rotating 3D solid painted with a procedural plasma shader in a GtkGLArea,
-   with a reactive glimmer control panel — the whole window is one glimmer hiccup
-   tree.
-
-   Everything 3D is glimmer-gl data: glimmer-gl.primitives builds a
-   cube / sphere / tetrahedron as a mesh, glimmer-gl.mesh tessellates it to an
-   interleaved position+normal buffer, glimmer-gl.matrix supplies the
-   model-view-projection, and glimmer-gl.shader turns the data-defined shader
-   (see gl-demo.scene) into a GL program whose uniforms are set by name.
-   glimmer-gl.gtk registers the :gl-area and :scale widgets into glimmer, so the
-   panel and the GL pane sit in the same reactive tree.
-
-   The GLArea is imperative — its realize/render/resize handlers build and drive
-   raw GL objects — so those are passed as plain fns on the [:gl-area] element. A
-   tick callback advances the clock (used for both rotation and the plasma) and
-   queues a redraw each frame.
-
-   Run with: joltc -M:run"
-  (:require [glimmer.core   :as ui]
-            [glimmer.ratom  :as r]
-            [glimmer-gl.gtk :as glx]        ; registers :gl-area + :scale
-            [glimmer-gl.gl  :as gl]
-            [glimmer-gl.mesh :as mesh]
-            [glimmer-gl.primitives :as p]
+  "Reactive Gothic shadow demo. The control panel is ordinary glimmer hiccup
+  (sliders/buttons whose atoms the renderer reads each frame), and the 3D scene
+  is a *declarative tree* — a camera + light + gothic cathedral assembled as
+  glimmer-gl.scene nodes. Nothing in this file calls GL imperatively to build
+  the world: on-render flattens the tree to a plan and hands it to the renderer,
+  which is the only place raw draw calls live. Reactivity flows from the panel
+  atoms into the scene data; interpretation stays separate, exactly as glimmer
+  keeps hiccup apart from the reconciler."
+  (:require [glimmer.core     :as ui]
+            [glimmer.ratom    :as r]
+            [glimmer-gl.gtk    :as glx]     ; side-effect: registers :gl-area + :scale
+            [glimmer-gl.gl     :as gl]
             [glimmer-gl.matrix :as m]
-            [glimmer-gl.shader :as sh]
-            [gl-demo.scene  :as scene]
-            [jolt.ffi       :as ffi]))
+            [glimmer-gl.scene  :as gscene]
+            [gl-demo.gothic    :as gothic]
+            [gl-demo.renderer  :as renderer]))
 
-;; --- control state (reactive — the panel re-renders on change) ---------------
-(defonce shape   (r/atom :cube))
-(defonce speed   (r/atom 1.0))
-(defonce zoom    (r/atom 1.0))    ; model scale
-(defonce p-scale (r/atom 3.0))    ; plasma pattern frequency (u_scale)
-(defonce warp    (r/atom 0.5))    ; plasma domain-warp strength (u_warp)
-(defonce blend   (r/atom 0.5))    ; mix between the plasma and stripe modules (u_mix)
-(defonce smooth  (r/atom false))  ; per-vertex (smooth) vs per-face (flat) normals
-(defonce paused  (r/atom false))
+(def ^:private ^double deg->rad (/ Math/PI 180.0))   ; Jolt has no Math/toRadians
 
-;; --- animation / GL state (plain atoms — not read by the panel) --------------
-(defonce clock    (atom 0.0))     ; drives rotation angle and plasma u_time
-(defonce viewport (atom [900 560]))
-;; Per-GLArea GL handles, keyed by the area widget pointer.
-(defonce gl-state (atom {}))
+;; --- reactive controls (sliders -> atoms the scene reads each frame) --------
+(defonce light-az    (r/atom 38.0))    ; sun azimuth (deg)
+(defonce light-el    (r/atom 42.0))    ; sun elevation (deg)
+(defonce ambient     (r/atom 0.10))
+(defonce shadow-bias (r/atom 0.002))
+(defonce cam-orbit   (r/atom 0.0))     ; camera azimuth around the nave (deg)
+(defonce auto-rotate (r/atom true))
+(defonce paused      (r/atom false))
 
-(def ^:private frame-dt 0.016)
-(def ^:private light [0.4 0.85 0.6])     ; directional light
+;; --- per-area GL state ------------------------------------------------------
+(defonce reported?    (r/atom false)) ; print the first render failure once, then stay quiet
+(defonce the-renderer (r/atom nil))   ; created on realize
+(defonce viewport     (r/atom [960 600]))
 
-;; --- geometry ----------------------------------------------------------------
-(defn- build-mesh [shape]
-  (case shape
-    :sphere (p/sphere 1.0 28 18)
-    :tetra  (p/tetrahedron 1.35)
-    (p/cuboid 1.5)))
-
-(defn- buffer-for [shape smooth?]
-  (mesh/->floats (build-mesh shape) {:shading (if smooth? :smooth :flat)}))
-
-;; --- GL plumbing -------------------------------------------------------------
-(def ^:private stride-bytes (* 6 (ffi/sizeof :float)))
-
-(defn- upload!
-  "(Re)fill the bound VBO from the mesh for `shape`/`smooth?`. Returns the vertex
-   count to draw."
-  [vbo shape smooth?]
-  (let [{:keys [data] vcount :count} (buffer-for shape smooth?)
-        ptr (gl/write-floats data)]
-    (gl/gl-bind-buffer gl/GL-ARRAY-BUFFER vbo)
-    (gl/gl-buffer-data gl/GL-ARRAY-BUFFER
-                       (* (count data) (ffi/sizeof :float))
-                       ptr gl/GL-STATIC-DRAW)
-    (ffi/free ptr)
-    vcount))
-
-(defn- setup-attribs!
-  "Wire the interleaved VBO to the shader's a_pos / a_normal attributes, using the
-   locations the compiled shader resolved."
-  [shader]
-  (let [pos (sh/attrib-loc shader :a_pos)
-        nrm (sh/attrib-loc shader :a_normal)]
-    (when (>= pos 0)
-      (gl/gl-enable-vertex-attrib-array pos)
-      ;; byte offsets pass as plain integers — jolt pointers are addresses
-      (gl/gl-vertex-attrib-pointer pos 3 gl/GL-FLOAT gl/GL-FALSE stride-bytes 0))
-    (when (>= nrm 0)
-      (gl/gl-enable-vertex-attrib-array nrm)
-      (gl/gl-vertex-attrib-pointer nrm 3 gl/GL-FLOAT gl/GL-FALSE stride-bytes
-                                   (* 3 (ffi/sizeof :float))))))
-
-;; --- GLArea handlers ---------------------------------------------------------
 (defn on-realize [area]
-  (glx/make-current area)
-  (when-let [err (glx/gl-area-error-message area)]
-    (println "GLArea context error:" err))
-  (let [shader (try (sh/program scene/shader-spec)
-                    (catch Throwable _ nil))]
-    (if-not shader
-      (println "gl-demo: failed to build GL program (see info log above)")
-      (let [idp (ffi/alloc (ffi/sizeof :uint))]
-        (gl/gl-gen-vertex-arrays 1 idp)
-        (let [vao (ffi/read idp :uint)]
-          (gl/gl-gen-buffers 1 idp)
-          (let [vbo (ffi/read idp :uint)]
-            (ffi/free idp)
-            (gl/gl-enable gl/GL-DEPTH-TEST)
-            (gl/gl-bind-vertex-array vao)
-            (let [n (upload! vbo @shape @smooth)]
-              (setup-attribs! shader)
-              (swap! gl-state assoc area
-                     {:shader shader :vao vao :vbo vbo :count n
-                      :shape @shape :smooth @smooth})
-              (println "gl-demo: GL ready — program" (:program shader)
-                       "vao" vao "verts" n))))))))
+  (gl/gl-enable gl/GL-DEPTH-TEST)
+  (gl/gl-enable gl/GL-CULL-FACE)
+  (gl/gl-front-face gl/GL-CCW)
+  (reset! the-renderer (renderer/make-renderer!)))
 
 (defn on-resize [_area w h]
-  (reset! viewport [w h])
-  (gl/gl-viewport 0 0 w h))
-
-(defn on-render [area]
-  (when-let [st (get @gl-state area)]
-    ;; rebuild the VBO if the shape or shading changed since the last upload
-    (let [st (if (or (not= (:shape st) @shape) (not= (:smooth st) @smooth))
-               (let [n (upload! (:vbo st) @shape @smooth)
-                     st' (assoc st :count n :shape @shape :smooth @smooth)]
-                 (swap! gl-state assoc area st') st')
-               st)
-          shader (:shader st)
-          [w h]  @viewport
-          aspect (/ (double w) (max 1.0 (double h)))
-          t      (double @clock)
-          s      (double @zoom)
-          model  (m/mul (m/mul (m/rotate-y t) (m/rotate-x (* t 0.5)))
-                        (m/scaling s s s))
-          view   (m/translation 0.0 0.0 -4.5)
-          proj   (m/perspective 50.0 aspect 0.1 100.0)
-          mvp    (m/mul proj (m/mul view model))]
-      (gl/gl-clear-color 0.05 0.06 0.09 1.0)
-      (gl/gl-clear (bit-or gl/GL-COLOR-BUFFER-BIT gl/GL-DEPTH-BUFFER-BIT))
-      (gl/gl-use-program (:program shader))
-      (sh/set-uniforms! shader
-        {:u_mvp     mvp
-         :u_model   model
-         :u_time    t
-         :u_scale   @p-scale
-         :u_warp    @warp
-         :u_mix     @blend
-         :u_stripes 8.0
-         :u_light   light})
-      (gl/gl-bind-vertex-array (:vao st))
-      (gl/gl-draw-arrays gl/GL-TRIANGLES 0 (:count st)))))
+  (reset! viewport [(max w 1) (max h 1)]))
 
 (defn on-tick [_area]
-  (when-not @paused
-    (swap! clock + (* (double @speed) frame-dt))))
+  (when (and @auto-rotate (not @paused))
+    ;; Jolt's `mod` is integer-only, so wrap by hand (increment is small & positive)
+    (swap! cam-orbit (fn [v] (let [w (+ v 0.25)] (if (>= w 360.0) (- w 360.0) w))))))
 
-;; --- reactive control panel --------------------------------------------------
-(defn- slider [label-text lo hi step value-atom]
+(defn on-render [_area]
+  (let [st @the-renderer]
+    (when st
+      (try
+       (let [to-rad #(* (double %) deg->rad)
+            laz    (to-rad @light-az)
+            lel    (to-rad @light-el)
+            orb    (to-rad @cam-orbit)
+            amb    (double @ambient)
+            bias   (double @shadow-bias)
+            target [0.0 4.0 -8.0]
+            eye    [(+ (* (Math/sin orb) 16.0) (nth target 0))
+                    5.5
+                    (+ (* (Math/cos orb) 16.0) (nth target 2))]
+            [cw ch] @viewport
+            view   (m/look-at eye target [0.0 1.0 0.0])
+            proj   (m/perspective 55.0 (/ (double cw) (double ch)) 0.1 200.0)
+            ;; sun direction (scene -> sun); light travels along its negation
+            sx     (* (Math/cos lel) (Math/sin laz))
+            sy     (Math/sin lel)
+            sz     (* (Math/cos lel) (Math/cos laz))
+            ldir   [(- sx) (- sy) (- sz)]
+            leye   [(+ (nth target 0) (* sx 42.0))
+                    (+ (nth target 1) (* sy 42.0))
+                    (+ (nth target 2) (* sz 42.0))]
+            lview  (m/look-at leye target [0.0 1.0 0.0])
+            lproj  (m/ortho -32.0 32.0 -32.0 32.0 1.0 130.0)
+            ;; declarative scene: camera + light + gothic geometry as one tree
+            plan   (gscene/flatten
+                     (gscene/group (m/ident)
+                       (gscene/camera {:eye eye :target target :up [0 1 0]
+                                      :fov 55 :near 0.1 :far 200})
+                       (gscene/light {:dir ldir :color [1.0 0.95 0.82]})
+                       (gothic/cathedral)))]
+         (renderer/draw! st
+           {:plan        plan
+            :view        view :proj proj :eye eye
+            :canvas      [cw ch] :bg [0.03 0.03 0.04]
+            :light       {:dir ldir :color [1.0 0.95 0.82]
+                          :lview lview :lproj lproj}
+            :ambient     [amb amb amb]
+            :shadow-bias bias
+            :fog         {:near 8.0 :far 50.0 :color [0.03 0.03 0.04]}}))
+       (catch Exception e
+         ;; Jolt GL errors surface as host conditions, not ex-info; condition-message
+         ;; is the reliable extractor. Print once to avoid flooding the tick loop.
+         (when (compare-and-set! reported? false true)
+           (let [msg (or (ex-message e)
+                         (try ((resolve 'jolt.host/condition-message) e)
+                              (catch :default _ nil)))]
+             (println "[on-render] FAILED:" (or msg (pr-str e))))))))))
+
+;; --- control panel (glimmer hiccup; atoms above are the source of truth) -----
+(defn- slider [cell min max step digits]
+  [:scale {:min min :max max :step step :value @cell :digits digits
+           :hexpand true :on-value #(reset! cell %)}])
+
+(defn- row [caption control]
   [:hbox {:spacing 8}
-   [:label {:label label-text :width-chars 6 :xalign 0.0}]
-   [:scale {:min lo :max hi :step step :value @value-atom :digits 2 :hexpand true
-            :on-value #(reset! value-atom %)}]])
+   [:label {:label caption :width 130 :xalign 0.0}] control])
 
-(defn- shape-button [label kw]
-  [:button {:label label
-            :sensitive (not= @shape kw)        ; the active shape is greyed out
-            :on-click #(reset! shape kw)}])
-
-(defn- control-panel []
-  [:vbox {:spacing 6 :margin 8}
-   [:hbox {:spacing 6}
-    [shape-button "Cube" :cube]
-    [shape-button "Sphere" :sphere]
-    [shape-button "Tetra" :tetra]]
-   [slider "Speed" 0.0 4.0 0.05 speed]
-   [slider "Zoom"  0.3 2.5 0.05 zoom]
-   [slider "Scale" 0.5 8.0 0.1  p-scale]
-   [slider "Warp"  0.0 1.5 0.05 warp]
-   [slider "Blend" 0.0 1.0 0.05 blend]      ; plasma <-> stripes
-   [:hbox {:spacing 12}
-    [:checkbutton {:label "Smooth shading" :active @smooth
-                   :on-toggled #(swap! smooth not)}]
-    [:button {:label (if @paused "Resume" "Pause")
+(defn control-panel []
+  [:vbox {:spacing 4 :margin 6}
+   (row "light azimuth"   (slider light-az 0 360 1 0))
+   (row "light elevation" (slider light-el 8 80 1 0))
+   (row "ambient"         (slider ambient 0 0.4 0.01 2))
+   (row "shadow bias"     (slider shadow-bias 0 0.02 0.0005 4))
+   (row "camera orbit"    (slider cam-orbit 0 360 1 0))
+   [:hbox {:spacing 8}
+    [:button {:label (if @auto-rotate "auto-rotate: on" "auto-rotate: off")
+              :on-click #(swap! auto-rotate not)}]
+    [:button {:label (if @paused "running (frozen)" "paused")
               :on-click #(swap! paused not)}]]])
 
 (defn app []
@@ -188,10 +125,8 @@
    [control-panel]
    [:separator {}]
    [:gl-area {:version [3 2] :depth-buffer true :hexpand true :vexpand true
-              :on-realize on-realize
-              :on-render  on-render
-              :on-resize  on-resize
-              :on-tick    on-tick}]])
+              :on-realize on-realize :on-render on-render
+              :on-resize on-resize :on-tick on-tick}]])
 
 (defn -main [& _]
   ;; GLIMMER_GL_DEMO_QUIT_MS auto-closes the window after N ms (smoke testing);
@@ -199,6 +134,6 @@
   (let [quit-ms (some-> (System/getenv "GLIMMER_GL_DEMO_QUIT_MS") Integer/parseInt)]
     (apply ui/run app
            :app-id "dev.jolt.glimmer-gl-demo"
-           :title  "glimmer-gl • plasma mesh"
-           :width  900 :height 640
+           :title  "glimmer-gl • gothic shadows"
+           :width  960 :height 660
            (when quit-ms [:auto-quit-ms quit-ms]))))
