@@ -31,3 +31,8 @@ Chez's FFI.
 - [malli-app](malli-app/) — [metosin/malli](https://github.com/metosin/malli)
   schema validation, pulled from git. `m/validate`/`m/explain` across the schema
   vocabulary (predicates, `:map`, `:vector`, `:enum`, bounded `:int`, …).
+- [nrepl-example](nrepl-example/) — a jolt app that starts an nREPL server and
+  parks, so you can connect an editor and drive the live process (inspect state,
+  mutate it, reload code). The shape of a binary deployed to, say, a Raspberry Pi
+  that you reach into over nREPL. Runs interpreted or compiled to a standalone
+  binary. `joltc run -m app.core`, `joltc build -m app.core -o nrepl-example`.
