@@ -1,0 +1,13 @@
+{:paths ["src"]
+
+ :deps {jolt-lang/glimmer-gl {:local/root "../../glimmer-gl"}
+        jolt-lang/glimmer    {:local/root "../../glimmer"}}
+
+ ;; Native libs (OpenGL from glimmer-gl, GTK4/GLib from glimmer) are declared in
+ ;; those deps' :jolt/native entries and merged by jolt's dependency walk.
+
+ :aliases {:run   {:main-opts ["-m" "fps-demo.core"]}
+           :check {:main-opts ["-m" "fps-demo.check"]}}
+
+ :tasks {run   "joltc -M:run"
+         check "joltc -M:check"}}

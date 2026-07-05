@@ -1,0 +1,8 @@
+# caches
+.lsp/
+.clj-kondo/
+.cpcache/
+.dirge/
+
+# local tooling
+.nrepl-port

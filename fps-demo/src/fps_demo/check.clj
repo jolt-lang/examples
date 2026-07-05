@@ -1,0 +1,811 @@
+(ns fps-demo.check
+  "Headless verification (no GL context, no display) of the q1k3 port's pure
+  layers. Real GL runs only at runtime via core.clj; this catches data/shape/
+  shader-source bugs before touching the GPU. Mirrors gl-demo.check's idiom."
+  (:require [clojure.string    :as str]
+            [glimmer-gl.shader :as shader]
+            [fps-demo.textured :as tex]
+            [fps-demo.shaders  :as sh]
+            [fps-demo.map      :as lvl]
+            [fps-demo.maps.l    :as lvl-data]
+            [fps-demo.render    :as render]
+            [fps-demo.player    :as player]
+            [fps-demo.model     :as model]
+            [fps-demo.models.unit :as unit]
+             [fps-demo.entity    :as ent]
+             [fps-demo.weapon    :as wpn]
+            [glimmer-gl.matrix  :as mat]
+            [jolt.ffi           :as ffi]
+            [glimmer-gl.gtk]))                         ; side-effect: widget registry
+
+(defn- approx= [a b] (< (Math/abs (- a b)) 1e-9))
+
+(defn- min-max [xs]
+  (reduce (fn [[lo hi] x] [(min lo x) (max hi x)])
+          [(first xs) (first xs)] (rest xs)))
+
+(defn -main [& _]
+  ;; --- textured box geometry --------------------------------------------------
+  ;; A box is 6 faces * 2 tris * 3 verts = 36 vertices, each [x y z u v nx ny nz]
+  ;; (stride 8), so the flat data has 288 floats. UVs stay within [0, tile].
+  (let [b     (tex/box [0.0 0.0 0.0] [2.0 2.0 2.0] 1.0)
+        data  (:data b)]
+    (println "textured box: count =" (:count b) " stride =" (:stride b)
+             " floats =" (count data))
+    (assert (= 36 (:count b))  "a box tessellates to 36 vertices")
+    (assert (= 8  (:stride b)) "interleaved stride is pos(3)+uv(2)+normal(3) = 8")
+    (assert (= 288 (count data)) "36 verts * 8 floats = 288")
+    (let [pos (vec (map (fn [i] (nth data i)) (range 0 (count data) 8)))
+          [pxmin pxmax] (min-max pos)]
+      (assert (approx= pxmin 0.0) (str "x min should be box min 0.0, got " pxmin))
+      (assert (approx= pxmax 2.0) (str "x max should be box max 2.0, got " pxmax)))
+    (let [uvs (vec (map (fn [i] (nth data (+ i 3))) (range 0 (count data) 8)))
+          [umin umax] (min-max uvs)]
+      (assert (approx= umin 0.0) "uv min is 0")
+      (assert (approx= umax 1.0) "uv max equals tile (1.0)")))
+
+  ;; --- q1k3 point-light + texture shader spec ---------------------------------
+  ;; The lit shader must declare a texture sampler, per-vertex UV, and a point
+  ;; light (position + colour + range). We check the generated GLSL, not the
+  ;; compiled program (compilation needs a GL context — verified at runtime).
+  (let [{:keys [vs-src fs-src]} (shader/sources sh/lit-spec)]
+    (assert (str/includes? fs-src "sampler2D") "lit shader samples a texture")
+    (assert (str/includes? fs-src "u_light_pos") "lit shader has a point light position")
+    (assert (str/includes? fs-src "u_light_col") "lit shader has a point light colour")
+    (assert (str/includes? vs-src "a_uv") "vertex shader reads a_uv attribute")
+    (assert (str/includes? vs-src "v_uv") "vertex shader writes the v_uv varying")
+    (assert (str/includes? fs-src "v_uv") "fragment shader reads v_uv")
+    (println "shader sources generated:"
+             "vs" (count vs-src) "chars, fs" (count fs-src) "chars"))
+
+  ;; --- q1k3 packed-map decoder ------------------------------------------------
+  ;; Synthetic container: 1 map, 2 blocks (with a texture change between them),
+  ;; 2 entities. Verifies block/entity parsing, world scaling, and the derived
+  ;; solid-cell collision set.
+  (let [data [16 0                      ; blocks_size = 16 (LE)
+               255 1                      ; sentinel -> texture index 1
+               0 0 0 1 1 1                ; block0: x0 y0 z0 sx1 sy1 sz1
+               255 2                      ; sentinel -> texture index 2
+               1 0 0 2 1 2                ; block1: x1 y0 z0 sx2 sy1 sz2
+               2 0                        ; num_entities = 2 (LE)
+               0 10 20 30 1 2            ; entity0: player @ grid(10,20,30)
+               12 5 6 7 0 0]             ; entity1: light @ grid(5,6,7)
+        [m]   (lvl/decode-container data)
+        blks  (:blocks m)
+        ents  (:entities m)
+        cells (lvl/solid-cells blks)]
+    (assert (= 1 (count (lvl/decode-container data))) "container has 1 map")
+    (assert (= 2 (count blks)) "parsed 2 blocks")
+    (assert (= 2 (count ents)) "parsed 2 entities")
+    ;; block0 keeps texture 1; block1 picks up texture 2 from the second sentinel
+    (assert (= 1 (get-in blks [0 :tex])) "block0 texture is 1")
+    (assert (= 2 (get-in blks [1 :tex])) "block1 texture is 2")
+    ;; grid coords parsed verbatim
+    (assert (= {:x 0 :y 0 :z 0 :sx 1 :sy 1 :sz 1}
+               (dissoc (nth blks 0) :tex)) "block0 grid coords")
+    (assert (= {:x 1 :y 0 :z 0 :sx 2 :sy 1 :sz 2}
+               (dissoc (nth blks 1) :tex)) "block1 grid coords")
+    ;; world scaling: X/Z *32, Y *16
+    (assert (= {:min [0.0 0.0 0.0]   :size [32.0 16.0 32.0]}
+               (lvl/world-box (nth blks 0))) "block0 world box")
+    (assert (= {:min [32.0 0.0 0.0]  :size [64.0 16.0 64.0]}
+               (lvl/world-box (nth blks 1))) "block1 world box")
+    ;; entity parse
+    (assert (= {:type 0 :x 10 :y 20 :z 30 :data1 1 :data2 2} (nth ents 0))
+           "player entity")
+    (assert (= {:type 12 :x 5 :y 6 :z 7 :data1 0 :data2 0} (nth ents 1))
+           "light entity")
+    ;; solid cells: block0 fills (0,0,0); block1 fills x in {1,2}, y 0, z in {0,1}
+    (assert (contains? cells [0 0 0]) "block0 is solid")
+    (assert (contains? cells [1 0 0]) "block1 cell (1,0,0) solid")
+    (assert (contains? cells [2 0 1]) "block1 cell (2,0,1) solid")
+    (assert (not (contains? cells [3 0 0])) "cell past block1 is empty")
+    (assert (not (contains? cells [0 1 0])) "cell above block0 is empty"))
+  (println "map decoder: 1 map, 2 blocks, 2 entities, 5 solid cells")
+
+  ;; --- decode the REAL q1k3 level (build/l = m1 ++ m2) -----------------------
+  ;; This is the load-bearing verification: the decoder must correctly parse the
+  ;; actual game's binary container. Counts come straight from pack_map.c output
+  ;; (m1: "331 blocks ... 91 entities", m2: "230 blocks ... 95 entities").
+  (let [maps   (lvl/decode-container lvl-data/bytes)
+        [m1 m2] maps]
+    (assert (= 2 (count maps)) "real container holds 2 maps (m1, m2)")
+    (assert (= 331 (count (:blocks m1))) "m1 has 331 blocks")
+    (assert (= 91 (count (:entities m1))) "m1 has 91 entities")
+    (assert (= 230 (count (:blocks m2))) "m2 has 230 blocks")
+    (assert (= 95 (count (:entities m2))) "m2 has 95 entities")
+    ;; every block has sane grid extents (within the 128^3 collision grid)
+    (doseq [b (:blocks m1)]
+      (assert (and (<= 0 (:x b) 127) (<= 0 (:y b) 127) (<= 0 (:z b) 127))
+              (str "m1 block in grid: " b))))
+  (println "real q1k3 level decoded: m1(331/91) m2(230/95)")
+
+  ;; --- render pipeline: geometry count ---------------------------------------
+  ;; Proves the level tessellates to exactly 331 blocks × 36 verts/block, i.e.
+  ;; the VBO the GL renderer uploads carries the whole static world. No GL
+  ;; context needed — this is pure data flow.
+  (let [n-blocks  331
+        expected  (* n-blocks 36)]
+    (assert (= expected (render/level-vertex-count))
+            "level tessellates to 331*36 vertices")
+    (assert (pos? expected) "level has geometry"))
+  (println "level render geometry:" (render/level-vertex-count) "vertices")
+
+  ;; --- player physics (pure translation of q1k3 _update_physics) -------------
+  ;; tick = 1/60 s. Gravity is -1200 u/s^2; one tick of free fall should add
+  ;; exactly gravity*tick to v.y while leaving X/Z velocity untouched.
+  (let [tick      0.016666667
+        empty     #{}
+        s0        {:p [0.0 1000.0 0.0] :v [0.0 0.0 0.0] :a [0.0 0.0 0.0]
+                   :f 10 :on-ground false}
+        s1        (player/step-physics empty s0 tick)
+        fall      (get-in s1 [:v 1])]
+    (assert (neg? fall) "gravity makes v.y negative")
+    (assert (< (Math/abs (- fall (* -1200.0 tick))) 0.01) "v.y == gravity*tick")
+    (assert (approx= 0.0 (get-in s1 [:v 0])) "friction never touches v.x at rest")
+    (assert (< (get-in s1 [:p 1]) 1000.0) "player descends"))
+  (println "player physics: free-fall gravity integration ok")
+
+  ;; voxel AABB collision query (cell [0 0 0] spans world x,z in [0,32), y in [0,16))
+  (let [cells #{[0 0 0]}]
+    (assert (player/block-at-box? cells [0.0 0.0 0.0] [10.0 10.0 10.0]) "box inside cell")
+    (assert (player/block-at-box? cells [-1.0 -1.0 -1.0] [0.0 0.0 0.0]) "box touching cell edge")
+    (assert (not (player/block-at-box? cells [33.0 0.0 0.0] [40.0 10.0 10.0])) "box past cell")
+    (assert (not (player/block-at-box? cells [0.0 33.0 0.0] [10.0 40.0 10.0])) "box above cell (y)"))
+  (println "player physics: voxel AABB collision query ok")
+
+  ;; floor landing: 4x4 floor of cells at y=0 (top at world y=16), player
+  ;; half-height 24 -> resting center >= 40. After enough ticks the player is
+  ;; on-ground and stable.
+  (let [tick      0.016666667
+        floor     (into #{} (for [x (range 0 4) z (range 0 4)] [x 0 z]))
+        s0        {:p [16.0 1000.0 16.0] :v [0.0 -2000.0 0.0] :a [0.0 0.0 0.0]
+                   :f 10 :on-ground false}
+        final     (loop [s s0 n 0]
+                    (if (or (:on-ground s) (> n 500)) s
+                        (recur (player/step-physics floor s tick) (inc n))))
+        py        (get-in final [:p 1])]
+    (assert (:on-ground final) "player lands and reports on-ground")
+    (assert (>= py 40.0) (str "resting center above floor top+half-height: " py))
+    (assert (< py 56.0) (str "resting center within one substep of floor: " py))
+    (assert (approx= 0.0 (get-in final [:v 1])) "vertical velocity killed on landing"))
+  (println "player physics: floor landing ok")
+
+  ;; wall stops horizontal motion: player starts GROUNDED on a floor at q1k3
+  ;; terminal walk speed (accel/friction = 3000/10 = 300 u/s), walks into a
+  ;; tall wall, and stops without penetrating. The wall spans y cells 0..3
+  ;; (world y [0,64)) so the grounded player's 48-tall box overlaps it.
+  (let [tick      0.016666667
+        cells     (into #{} (concat
+                              (for [y (range 0 4)] [2 y 0])    ; tall wall, world x [64,96)
+                              (for [cx (range 0 2)] [cx 0 0]))) ; floor x [0,64) under approach
+        s0        {:p [0.0 40.0 0.0] :v [300.0 0.0 0.0] :a [0.0 0.0 0.0]
+                   :f 10 :on-ground true}
+        final     (loop [s s0 n 0]
+                    (if (> n 200) s (recur (player/step-physics cells s tick) (inc n))))
+        px        (get-in final [:p 0])
+        half      (player/player-half)]
+    ;; player box max.x = px + half.x must stay < wall min.x (64)
+    (assert (< (+ px (nth half 0)) 64.0)
+            (str "player X never penetrates wall: " (+ px (nth half 0))))
+    (assert (approx= 0.0 (get-in final [:v 0])) "horizontal velocity killed by wall"))
+  (println "player physics: wall collision ok")
+
+  ;; mouse look: yaw advances with mouse-x; pitch clamps to [-1.5,1.5]
+  (let [[yaw1 pitch1] (player/look 0.0 0.0 1000.0 0.0)
+        [_ pitch2]    (player/look 0.0 0.0 0.0 1.0e7)]
+    (assert (pos? yaw1) "mouse +x adds yaw")
+    (assert (approx= 0.0 pitch1) "no mouse y -> no pitch")
+    (assert (approx= 1.5 pitch2) "pitch clamps to +1.5"))
+
+  ;; camera forward must agree with wish-accel's horizontal forward so that W
+  ;; walks toward screen center. forward's (x,z) dir == wish-accel forward dir.
+  (let [gnd true]
+    (doseq [yaw [0.0 0.7 1.5 2.2 3.0 4.0 5.5 6.2]]
+      (let [fwd   (player/forward yaw 0.0)
+            fx    (nth fwd 0) fz (nth fwd 2)
+            accel (player/wish-accel {:forward 1} yaw gnd)   ; iz=1, ix=0
+            ax    (nth accel 0) az (nth accel 2)
+            ;; compare unit horizontal directions (sign of cross product ~ 0)
+            cross (- (* fx az) (* fz ax))]
+        (assert (< (Math/abs cross) 1e-6)
+                (str "forward & wish-accel disagree at yaw=" yaw
+                     ": cross=" cross)))))
+  (println "player physics: camera forward agrees with wish-accel ok")
+
+  ;; --- .rmf model parser (pure port of q1k3/source/model.js) -----------------
+  ;; Synthetic single-triangle model, hand-computed:
+  ;;   header [1 3 1]; verts (b-15): v0=(0,0,0) v1=(10,0,0) v2=(0,10,0)
+  ;;   bounds min/max x,y in [0,10] -> uf=0.1 u=0 ; vf=-0.1 v=-1.0
+  ;;   index triple [0,1,2] (delta a=0, abs b=1, abs c=2)
+  ;;   face normal normalize(cross(v2-v1,v0-v1)) = (0,0,1)
+  ;;   emitted order: mv2,mv1,mv0 with uv v2,v1,v0
+  (let [blob      [1 3 1  15 15 15  25 15 15  15 25 15  0 1 2]
+        models    (model/load-container blob)]
+    (assert (= (count models) 1) "container splits into 1 model blob")
+    (assert (= (first models) blob) "single-blob container round-trips whole blob"))
+  (println "model parser: container splitting ok")
+
+  (let [blob      [1 3 1  15 15 15  25 15 15  15 25 15  0 1 2]
+        m         (model/init-model blob 1 1 1)
+        verts     (:verts m)
+        stride    (:stride m)
+        frame0    (get (:frames m) 0)]
+    (assert (= stride 8) "vertex stride is pos3+normal3+uv2 = 8")
+    (assert (= frame0 0) "first frame starts at offset 0")
+    (assert (= (:num-verts m) 3) "one face -> 3 emitted verts")
+    (assert (approx= 0.0 (nth verts (+ frame0 3))) "normal.x = 0")
+    (assert (approx= 0.0 (nth verts (+ frame0 4))) "normal.y = 0")
+    (assert (approx= 1.0 (nth verts (+ frame0 5))) "normal.z = 1")
+    (let [off frame0]
+      (assert (approx= 0.0  (nth verts (+ off 0))) "v0 pos.x")
+      (assert (approx= 10.0 (nth verts (+ off 1))) "v0 pos.y")
+      (assert (approx= 0.0  (nth verts (+ off 2))) "v0 pos.z")
+      (assert (approx= 0.0  (nth verts (+ off 6))) "v0 uv.u")
+      (assert (approx= -2.0 (nth verts (+ off 7))) "v0 uv.v"))
+    (let [off (+ frame0 stride)]
+      (assert (approx= 10.0 (nth verts (+ off 0))) "v1 pos.x")
+      (assert (approx= 1.0  (nth verts (+ off 6))) "v1 uv.u")
+      (assert (approx= -1.0 (nth verts (+ off 7))) "v1 uv.v"))
+    (let [off (+ frame0 (* 2 stride))]
+      (assert (approx= 0.0  (nth verts (+ off 0))) "v2 pos.x")
+      (assert (approx= 0.0  (nth verts (+ off 6))) "v2 uv.u")
+      (assert (approx= -1.0 (nth verts (+ off 7))) "v2 uv.v")))
+  (println "model parser: single-triangle vertex/normal/uv ok")
+
+  ;; header [2 1 1]: 2 frames * 1 vert + 1 face. Per-axis scale (y*2) and frame
+  ;; offsets advance by faces*3.
+  (let [blob2     [2 1 1  15 15 15  30 15 15  0 0 0]
+        m         (model/init-model blob2 1 2 1)
+        verts     (:verts m)
+        stride    (:stride m)]
+    (assert (= (count (:frames m)) 2) "two frame offsets")
+    (assert (= (get (:frames m) 0) 0) "frame 0 at 0")
+    (assert (= (get (:frames m) 1) 3) "frame 1 at faces*3 = 3")
+    (assert (approx= 0.0 (nth verts 1)) "scaled y of frame0 = 0*2")
+    (let [off (* (get (:frames m) 1) stride)]
+      (assert (approx= 15.0 (nth verts (+ off 0))) "frame1 pos.x = 15")
+      (assert (approx= 0.0  (nth verts (+ off 1))) "frame1 pos.y = 0*2")))
+  (println "model parser: multi-frame + per-axis scale ok")
+
+  ;; --- #52 core: model frame -> render-interleaved buffer (pure) ---------------
+  ;; render.clj binds attributes as [a_pos3 a_uv2 a_normal3] (stride 8), but
+  ;; model.clj stores each vertex as [pos3 normal3 uv2]. frame-buffer reorders one
+  ;; frame into render order; mix-frame-buffer lerps two frames' POSITIONS by t
+  ;; (uv + normal taken from frame A) for skeletal-free vertex anim, à la q1k3.
+  (let [blob [1 3 1  15 15 15  25 15 15  15 25 15  0 1 2]
+        m    (model/init-model blob 1 1 1)
+        fb   (model/frame-buffer m 0)
+        d    (:data fb)]
+    (assert (= (:count fb) 3) "frame-buffer emits num-verts verts")
+    (assert (= (count d) 24) "3 verts * stride 8 = 24 floats")
+    ;; v0 = mv2 = (0,10,0) uv (0,-2) normal (0,0,1)  -> [pos uv normal]
+    (assert (approx= (nth d 0) 0.0)  "fb v0 pos.x = 0")
+    (assert (approx= (nth d 3) 0.0)  "fb v0 uv.u = 0")
+    (assert (approx= (nth d 4) -2.0) "fb v0 uv.v = -2")
+    (assert (approx= (nth d 5) 0.0)  "fb v0 n.x = 0")
+    (assert (approx= (nth d 7) 1.0)  "fb v0 n.z = 1")
+    ;; v1 = mv1 = (10,0,0) uv (1,-1)
+    (assert (approx= (nth d 12) -1.0) "fb v1 uv.v = -1"))
+  (println "model frame-buffer: pos/uv/normal reorder ok")
+
+  ;; 2-frame triangle: frame-1 lifts v2 by +10 in z. mix at t=0.5 lerps that
+  ;; vertex's position to z=5 while keeping frame-0 uv/normal.
+  (let [blob2 [2 3 1   15 15 15  25 15 15  15 25 15   ; frame 0
+               15 15 15  25 15 15  15 25 25           ; frame 1 (v2 z +10)
+               0 1 2]
+        m     (model/init-model blob2 1 1 1)
+        mix   (model/mix-frame-buffer m 0 1 0.5)
+        d     (:data mix)]
+    (assert (= (:count mix) 3) "mix emits num-verts verts")
+    ;; v0 = mv2: frame0 pos (0,10,0), frame1 pos (0,10,10) -> lerped (0,10,5)
+    (assert (approx= (nth d 2) 5.0) "mix v0 pos.z lerped to 5 at t=0.5")
+    (assert (approx= (nth d 4) -2.0) "mix v0 uv = frame0 uv (unchanged)")
+    (assert (approx= (nth d 7) 1.0) "mix v0 normal = frame0 normal (0,0,1)")
+    ;; v1 = mv1: pos identical in both frames -> stays (10,0,0)
+    (assert (approx= (nth d 9) 0.0) "mix v1 pos.y = 0 (no lerp delta)")
+    ;; t=0 and t=1 reduce to the exact frame buffers (compared numerically:
+    ;; frame-buffer returns int pos from the raw blob, mix-frame-buffer lerps to
+    ;; float — equal in value, distinct under Clojure =).
+    (let [d0 (:data (model/mix-frame-buffer m 0 1 0.0))
+          f0 (:data (model/frame-buffer m 0))]
+      (assert (every? true? (map approx= d0 f0)) "mix at t=0 equals frame-buffer frame 0"))
+    (let [d1 (:data (model/mix-frame-buffer m 0 1 1.0))
+          f1 (:data (model/frame-buffer m 1))]
+      ;; at t=1 POSITIONS match frame b exactly; uv/normal stay frame a by design
+      ;; (cheap vertex anim — normals aren't re-derived per blend), so the whole
+      ;; buffer need not equal f1, whose normals were recomputed for moved geo.
+      (assert (approx= (nth d1 2) (nth f1 2)) "mix at t=1: v0 pos.z matches frame1")
+      (assert (approx= (nth d1 10) (nth f1 10)) "mix at t=1: v1 pos.z matches frame1")))
+  (println "model mix-frame-buffer: 2-frame position lerp ok")
+
+  ;; --- REAL grunt asset: parse the actual q1k3 unit.rmf (6 anim frames) ------
+  ;; Verifies init-model + frame-buffer against the genuine binary produced by
+  ;; pack_model.php from unit_{idle,run_1..4,fire}.obj. Guards the entire asset
+  ;; pipeline: packer -> embedded bytes -> parser -> render buffer.
+  (let [m   (model/init-model unit/bytes 2.5 2.2 2.5)
+        fb0 (model/frame-buffer m 0)]
+    (assert (= (count (:frames m)) 6) "unit.rmf has 6 animation frames")
+    (assert (= (:num-verts m) (* 68 3)) "unit.rmf: 68 faces * 3 = 204 verts")
+    (assert (= (:count fb0) 204) "frame-buffer emits 204 render verts")
+    (assert (= (count (:data fb0)) (* 204 8)) "frame-buffer: 204 verts * stride 8")
+    ;; positions live in [-2.5, 2.5] after sx,sy,sz scaling (packer normalizes
+    ;; to +-15 raw, init-model centers+scales). Sanity-range the first vert.
+    (let [px (nth (:data fb0) 0)]
+      (assert (and (< px 5.0) (> px -5.0)) "unit v0 pos.x within scaled bounds"))
+    ;; animation is real: frame 0 (idle) and frame 1 (run_1) differ in position,
+    ;; proving multi-frame decode works on the actual asset.
+    (let [d0 (:data (model/frame-buffer m 0))
+          d1 (:data (model/frame-buffer m 1))]
+      (assert (not (every? true? (map approx= d0 d1)))
+              "unit.rmf: frame 0 and frame 1 positions differ (animation present)")))
+  (println "model: real unit.rmf (6-frame grunt) parses + animates ok")
+
+  ;; --- #52[C]: anim-state -> frame pair + mix (pure, q1k3 r_u_frame_mix) -----
+  ;; unit.rmf frames: 0=idle, 1..4=run cycle, 5=fire. enemy-frame-anim maps an
+  ;; enemy's {:anim-frames :anim-period :anim-time} to [frame-a frame-b mix].
+  (let [idle {:anim-frames [0]       :anim-period 1.0 :anim-time 0.0}
+        walk {:anim-frames [1 2 3 4] :anim-period 0.4 :anim-time 0.0}]
+    ;; single-frame anim is static
+    (assert (= (model/enemy-frame-anim idle) [0 0 0.0]) "idle -> [0 0 0]")
+    ;; walk at t=0: frame[0]=1 blending into frame[1]=2, mix 0
+    (assert (= (model/enemy-frame-anim walk) [1 2 0.0]) "walk t=0 -> [1 2 0]")
+    ;; walk halfway through first frame (period/8 = 0.05): mix 0.5
+    (let [[a b mix] (model/enemy-frame-anim
+                       (assoc walk :anim-time 0.05))]
+      (assert (= a 1) "walk t=0.05 frame-a = 1")
+      (assert (= b 2) "walk t=0.05 frame-b = 2")
+      (assert (approx= mix 0.5) "walk t=0.05 mix = 0.5"))
+    ;; walk at t=0.1 (one full frame): advances to [2 3 0]
+    (assert (= (model/enemy-frame-anim (assoc walk :anim-time 0.1)) [2 3 0.0])
+            "walk t=0.1 -> [2 3 0]")
+    ;; walk at t=period wraps cleanly back to start
+    (assert (= (model/enemy-frame-anim (assoc walk :anim-time 0.4)) [1 2 0.0])
+            "walk t=period wraps -> [1 2 0]"))
+  (println "model enemy-frame-anim: idle/walk/mix/wrap ok")
+
+  ;; --- #52[D]: per-frame render buffer contract (what draw-enemies! uploads) --
+  ;; draw-enemies! blends two frames each tick via mix-frame-buffer, then uploads
+  ;; (:data buf) as floats and draws (:count buf) verts. Pin that contract on the
+  ;; real grunt: a single-frame idle and a blended run pair both yield 204 verts
+  ;; (204*8 floats), and the blend actually interpolates between the two frames.
+  (let [m    (model/init-model unit/bytes 2.5 2.2 2.5)
+        idle (model/mix-frame-buffer m 0 0 0.0)
+        walk (model/mix-frame-buffer m 1 2 0.5)]
+    (assert (= (:count idle) 204) "mix idle: 204 verts")
+    (assert (= (count (:data idle)) (* 204 8)) "mix idle: 204*8 floats")
+    (assert (= (:count walk) 204) "mix walk: 204 verts")
+    (assert (= (count (:data walk)) (* 204 8)) "mix walk: 204*8 floats")
+    (let [d1 (model/frame-buffer m 1)
+          d2 (model/frame-buffer m 2)
+          x1 (nth (:data d1) 0) x2 (nth (:data d2) 0) xm (nth (:data walk) 0)
+          lo (min x1 x2) hi (max x1 x2)]
+      (assert (and (>= xm lo) (<= xm hi))
+              "mix walk: blended pos.x within frame1..frame2")))
+  (println "model mix-frame-buffer: idle + blend render buffers ok")
+
+  ;; --- #52[C]: enemy model matrix (pure, T · Ry · S) -------------------------
+  ;; render/enemy-model-matrix composes translate * yaw-rotate-Y * uniform scale.
+  ;; Checked with yaw=0 (rotation-independent) + a length-preserving rotation.
+  (let [tp (fn [m p] (mat/transform-point m p))]
+    ;; translate: origin -> pos
+    (let [m (render/enemy-model-matrix {:pos [10 0 0] :yaw 0 :scale 1})]
+      (assert (every? true? (map approx= (tp m [0 0 0]) [10.0 0.0 0.0]))
+              "model-matrix translate: origin -> (10,0,0)"))
+    ;; uniform scale: [1 1 1] -> [2 2 2]
+    (let [m (render/enemy-model-matrix {:pos [0 0 0] :yaw 0 :scale 2})]
+      (assert (every? true? (map approx= (tp m [1 1 1]) [2.0 2.0 2.0]))
+              "model-matrix scale: [1 1 1] -> [2 2 2]"))
+    ;; translate + scale: [1 0 0] at pos [5 0 0] scale 1 -> [6 0 0]
+    (let [m (render/enemy-model-matrix {:pos [5 0 0] :yaw 0 :scale 1})]
+      (assert (every? true? (map approx= (tp m [1 0 0]) [6.0 0.0 0.0]))
+              "model-matrix translate+scale: [1 0 0] -> (6,0,0)"))
+    ;; rotation preserves length: unit point stays unit-distance from origin
+    (let [m   (render/enemy-model-matrix {:pos [0 0 0] :yaw 1.0 :scale 1})
+          out (tp m [1 0 0])
+          mag (Math/sqrt (+ (* (out 0) (out 0)) (* (out 1) (out 1)) (* (out 2) (out 2))))]
+      (assert (approx= mag 1.0) "model-matrix yaw rotates but preserves length")))
+  (println "render enemy-model-matrix: translate/scale/rotate ok")
+
+  ;; --- enemy AI math (atan2 hand-rolled — jolt has no Math/atan2) -----------
+  ;; atan2 must agree with the true values to within the ~0.005 rad rational
+  ;; approximation; anglemod is exact (modulo fold, no atan2).
+  (let [pi  Math/PI
+        tol 0.01]
+    (assert (< (Math/abs (- (ent/atan2 1.0 1.0)  (/ pi 4))) tol) "atan2(1,1)=pi/4")
+    (assert (approx= (ent/atan2 0.0 1.0) 0.0) "atan2(0,1)=0")
+    (assert (< (Math/abs (- (ent/atan2 1.0 0.0) (/ pi 2))) tol) "atan2(1,0)=pi/2")
+    (assert (< (Math/abs (- (ent/atan2 0.0 -1.0) pi)) tol) "atan2(0,-1)=pi")
+    (assert (< (Math/abs (- (ent/atan2 -1.0 0.0) (- (/ pi 2)))) tol) "atan2(-1,0)=-pi/2")
+    (assert (< (Math/abs (- (ent/atan2 1.0 -1.0) (* 0.75 pi))) tol) "atan2(1,-1)=3pi/4")
+    (assert (< (Math/abs (- (ent/atan2 -1.0 -1.0) (* -0.75 pi))) tol) "atan2(-1,-1)=-3pi/4"))
+  (let [pi Math/PI twopi (* 2.0 pi)]
+    (assert (approx= (ent/anglemod 0.5) 0.5) "anglemod keeps small positive")
+    (assert (approx= (ent/anglemod -0.5) -0.5) "anglemod keeps small negative")
+    (assert (< (Math/abs (- (ent/anglemod (+ pi 0.1)) -3.0415926)) 0.01) "anglemod wraps pi+e")
+    ;; boundary at exactly +/-pi is convention-dependent (q1k3's own atan2(sin,cos)
+    ;; picks a side by float dust); gameplay deltas never land here, so test magnitude.
+    (assert (< (Math/abs (- (Math/abs (ent/anglemod (* 3 pi))) pi)) 1e-6) "anglemod wraps 3pi->|pi|")
+    (assert (< (Math/abs (- (Math/abs (ent/anglemod (* -3 pi))) pi)) 1e-6) "anglemod wraps -3pi->|pi|"))
+  ;; angle-to-player (vec3_2d_angle = atan2(dx, dz)) + 2D distance
+  (let [pi Math/PI]
+    (assert (< (Math/abs (- (ent/angle-to-player [0.0 0.0 0.0] [1.0 0.0 1.0]) (/ pi 4))) 0.01)
+            "angle to NE player is pi/4")
+    (assert (approx= (ent/angle-to-player [0.0 0.0 0.0] [0.0 0.0 5.0]) 0.0)
+            "player straight +Z is yaw 0 (forward=[sin,cos])")
+    (assert (approx= (ent/dist-2d [0.0 0.0 0.0] [3.0 0.0 4.0]) 5.0) "3-4-5 distance"))
+  (println "entity math: atan2 / anglemod / angle-to-player / dist-2d ok")
+
+  ;; --- enemy construction + set-state (anim reset, timer + jitter) ----------
+  (let [e (ent/make-enemy [0.0 0.0 0.0] 0.0)]
+    (assert (= (:state e) :idle) "make-enemy starts idle")
+    (assert (approx= (:health e) ent/base-health) "default health")
+    (assert (approx= (:state-update-at e) 0.1) "idle update-at = 0 + 0.1 dur + 0 jitter")
+    (assert (= (:anim-frames e) [0]) "idle anim = frame 0"))
+  ;; set-state follow, rng 0 -> no jitter: at = t + dur + dur/4*0
+  (let [f (ent/set-state (ent/make-enemy [0.0 0.0 0.0] 0.0) :follow 10.0 (fn [] 0.0))]
+    (assert (= (:state f) :follow) "set-state follow")
+    (assert (approx= (:anim-period f) 0.20) "follow uses run anim, period 0.20")
+    (assert (= (:anim-frames f) [1 2 3 4]) "follow anim frames 1..4")
+    (assert (approx= (:anim-time f) 0.0) "set-state resets anim-time to 0")
+    (assert (approx= (:state-update-at f) 10.3) "follow update-at = 10 + 0.3 + 0"))
+  ;; set-state follow, rng 1 -> full jitter: at = t + dur + dur/4
+  (let [f (ent/set-state (ent/make-enemy [0.0 0.0 0.0] 0.0) :follow 10.0 (fn [] 1.0))]
+    (assert (approx= (:state-update-at f) 10.375) "follow update-at = 10 + 0.3 + 0.075 jitter"))
+  (println "entity: make-enemy + set-state (anim/timer/jitter) ok")
+
+  ;; --- FSM decision tick (entity_enemy._update) -----------------------------
+  ;; Every test calls state-update directly with an injected view + rng, so the
+  ;; transition logic is verified without the voxel map / GL. rng (fn [] 0.0)
+  ;; gives the "no evade, no jitter" path; (fn [] 1.0) forces evade / full jitter.
+  (let [base  (ent/make-enemy [0.0 0.0 0.0] 0.0)
+        see   {:dist 100.0 :angle 1.0 :can-see true}
+        blind {:dist 100.0 :angle 1.0 :can-see false}
+        far   {:dist 900.0 :angle 1.0 :can-see true}]
+    ;; idle + can-see + near  -> wake into attack-aim
+    (assert (= (:state (ent/state-update base see 5.0 (fn [] 0.0))) :attack-aim)
+            "idle wakes to attack-aim when LOS + near")
+    ;; idle + near but blind  -> stays idle
+    (assert (= (:state (ent/state-update base blind 5.0 (fn [] 0.0))) :idle)
+            "idle stays idle when no LOS")
+    ;; idle + far             -> stays idle
+    (assert (= (:state (ent/state-update base far 5.0 (fn [] 0.0))) :idle)
+            "idle stays idle when too far"))
+  ;; FOLLOW transitions
+  (let [f0 (ent/set-state (ent/make-enemy [0.0 0.0 0.0] 0.0) :follow 0.0 (fn [] 0.0))]
+    ;; follow + see + in attack band + rng low (<= chance) -> attack-aim
+    (assert (= (:state (ent/state-update f0 {:dist 400.0 :angle 0.5 :can-see true}
+                                    5.0 (fn [] 0.0))) :attack-aim)
+            "follow -> attack-aim in attack band (rng<=chance)")
+    ;; follow + see + in attack band + rng high (> chance) -> evade
+    (assert (= (:state (ent/state-update f0 {:dist 400.0 :angle 0.5 :can-see true}
+                                    5.0 (fn [] 1.0))) :evade)
+            "follow -> evade when rng>chance")
+    ;; follow + too close (< evade) -> evade regardless of rng
+    (assert (= (:state (ent/state-update f0 {:dist 50.0 :angle 0.5 :can-see true}
+                                    5.0 (fn [] 0.0))) :evade)
+            "follow -> evade when within evade-distance"))
+  ;; follow -> aim path: target_yaw tracks player, and aim-check evades if blind
+  (let [f0 (ent/set-state (ent/make-enemy [0.0 0.0 0.0] 0.0) :follow 0.0 (fn [] 0.0))]
+    (let [r (ent/state-update f0 {:dist 400.0 :angle 0.5 :can-see true} 5.0 (fn [] 0.0))]
+      (assert (= (:state r) :attack-aim) "follow -> attack-aim in attack band (rng<=chance)")
+      (assert (approx= (:target-yaw r) 0.5) "aim sets target-yaw to player angle"))
+    ;; follow + blind + in band: aim entered, then aim-check evades (no LOS)
+    (assert (= (:state (ent/state-update f0 {:dist 400.0 :angle 0.5 :can-see false}
+                                    5.0 (fn [] 0.0))) :evade)
+            "follow -> aim -> evade when LOS lost in same tick"))
+  ;; attack-aim auto-advances to prepare on its own tick (aim is a 0.1s orient)
+  (let [a (ent/set-state (ent/make-enemy [0.0 0.0 0.0] 0.0) :attack-aim 0.0 (fn [] 0.0))]
+    (assert (= (:state (ent/state-update a {:dist 200.0 :angle 0.7 :can-see true}
+                                5.0 (fn [] 0.0))) :attack-prepare)
+            "attack-aim auto-advances to attack-prepare on tick"))
+  ;; auto-advance chain: prepare ->(tick) exec [FIRE] ->(tick) recover
+  (let [prep (ent/make-enemy [0.0 0.0 0.0] 0.0)
+        prep (ent/set-state prep :attack-prepare 0.0 (fn [] 0.0))
+        ;; prepare update-at = 0.4; tick at t=0.5 -> advance to exec, fire-now set
+        exec (ent/state-update prep {:dist 200.0 :angle 0.0 :can-see true} 0.5 (fn [] 0.0))]
+    (assert (= (:state exec) :attack-exec) "prepare auto-advances to exec")
+    (assert (true? (:fire-now exec)) "attack-exec sets fire-now"))
+  ;; fire-now is a per-frame transient: step-enemy clears it next frame.
+  ;; frame A (decision tick: prepare->exec) fires; frame B (no new tick) must not.
+  (let [prep (-> (ent/make-enemy [0.0 0.0 0.0] 0.0)
+                 (ent/set-state :attack-prepare 0.4 (fn [] 0.0)))   ; update-at 0.8
+        view {:dist 200.0 :angle 0.0 :can-see true}
+        a    (ent/step-enemy prep view 0.9 0.016 (fn [] 0.0))]      ; 0.9 > 0.8 -> tick -> exec -> fire
+    (assert (true? (:fire-now a)) "step-enemy frame A fires (exec entered)")
+    (let [b (ent/step-enemy a view 0.917 0.016 (fn [] 0.0))]        ; +1 frame, before exec update-at
+      (assert (not (:fire-now b)) "step-enemy frame B does not re-fire (transient cleared)")))
+  (println "entity FSM: wake/follow/aim/evade/auto-advance+fire ok")
+
+  ;; --- per-frame motion: yaw lerp + velocity-from-state-speed + anim ---------
+  ;; step-enemy's every-frame path (not gated by the decision tick). Use a frame
+  ;; where no tick is due so only yaw/vel/anim run. dt small; view irrelevant.
+  (let [e (-> (ent/make-enemy [0.0 0.0 0.0] 0.0)
+              (assoc :target-yaw (/ Math/PI 2) :on-ground true))
+        ;; idle update-at 0.1; step at t=0.0 (< 0.1) -> no tick, only per-frame
+        r (ent/step-enemy e {:dist 999.0 :angle 0.0 :can-see false} 0.0 0.016 (fn [] 0.0))]
+    ;; yaw 0 -> toward pi/2 by 0.1*delta = pi/2*0.1
+    (assert (approx= (:yaw r) (* (/ Math/PI 2) 0.1)) "yaw lerps 10% toward target")
+    ;; idle speed mult 0 -> zero horizontal velocity, vy preserved (0)
+    (assert (approx= (nth (:vel r) 0) 0.0) "idle vel.x = 0")
+    (assert (approx= (nth (:vel r) 2) 0.0) "idle vel.z = 0")
+    ;; anim-time advanced by dt
+    (assert (approx= (:anim-time r) 0.016) "anim-time += dt"))
+  ;; follow (speed mult 1.0) + target-yaw 0 -> forward = +Z at full speed
+  (let [f (-> (ent/make-enemy [0.0 0.0 0.0] 0.0)
+              (ent/set-state :follow 0.0 (fn [] 0.0))   ; update-at 0.3
+              (assoc :target-yaw 0.0 :on-ground true))
+        r (ent/step-enemy f {:dist 999.0 :angle 0.0 :can-see false} 0.0 0.016 (fn [] 0.0))]
+    (assert (approx= (nth (:vel r) 2) ent/enemy-speed) "follow vel.z = full speed (+Z, yaw 0)")
+    (assert (approx= (nth (:vel r) 0) 0.0) "follow vel.x = 0 (yaw 0 -> straight +Z)"))
+  ;; patrol (mult 0.5) at yaw pi/2 -> forward = +X at half speed
+  (let [p (-> (ent/make-enemy [0.0 0.0 0.0] 0.0)
+              (ent/set-state :patrol 0.0 (fn [] 0.0))
+              (assoc :target-yaw (/ Math/PI 2) :on-ground true))
+        r (ent/step-enemy p {:dist 999.0 :angle 0.0 :can-see false} 0.0 0.016 (fn [] 0.0))]
+    (assert (approx= (nth (:vel r) 0) (* 0.5 ent/enemy-speed)) "patrol vel.x = half speed (+X, yaw pi/2)")
+    (assert (approx= (nth (:vel r) 2) 0.0) "patrol vel.z = 0"))
+  ;; airborne -> horizontal velocity left untouched
+  (let [f (-> (ent/make-enemy [0.0 0.0 0.0] 0.0)
+              (ent/set-state :follow 0.0 (fn [] 0.0))
+              (assoc :on-ground false :vel [7.0 7.0 7.0]))
+        r (ent/step-enemy f {:dist 999.0 :angle 0.0 :can-see false} 0.0 0.016 (fn [] 0.0))]
+    (assert (approx= (nth (:vel r) 0) 7.0) "airborne keeps vel.x"))
+  (println "entity motion: yaw-lerp / velocity-by-state / anim / airborne ok")
+
+  ;; --- damage / death / wake-on-hit / grunt spec ----------------------------
+  ;; A non-lethal hit while already alert (follow) just reduces health.
+  (let [f (ent/set-state (ent/make-enemy [0.0 0.0 0.0] 0.0) :follow 0.0 (fn [] 0.0))
+        r (ent/receive-damage f 10.0 [1.0 0.0 1.0] 5.0 (fn [] 0.0))]
+    (assert (approx= (:health r) (- ent/base-health 10.0)) "non-lethal hit reduces health")
+    (assert (= (:state r) :follow) "alert enemy stays follow (no re-wake)")
+    (assert (not (:dead? r)) "not dead"))
+  ;; A hit while IDLE wakes to follow facing the player.
+  (let [i (ent/make-enemy [0.0 0.0 0.0] 0.0)
+        r (ent/receive-damage i 10.0 [1.0 0.0 1.0] 5.0 (fn [] 0.0))]
+    (assert (= (:state r) :follow) "idle hit wakes to follow")
+    (assert (< (Math/abs (- (:target-yaw r) (/ Math/PI 4))) 0.01) "wake faces player (pi/4 to NE)")
+    (assert (approx= (:state-update-at r) (+ 5.0 0.3)) "wake follow update-at = t + 0.3"))
+  ;; PATROL hit also wakes to follow.
+  (let [p (ent/set-state (ent/make-enemy [0.0 0.0 0.0] 0.0) :patrol 0.0 (fn [] 0.0))]
+    (assert (= (:state (ent/receive-damage p 1.0 [0.0 0.0 5.0] 5.0 (fn [] 0.0))) :follow)
+            "patrol hit wakes to follow"))
+  ;; Lethal hit: dead? true, health clamped to 0, state unchanged (caller gibs).
+  (let [r (ent/receive-damage (ent/make-enemy [0.0 0.0 0.0] 0.0) 999.0 [1.0 0.0 0.0] 5.0 (fn [] 0.0))]
+    (assert (true? (:dead? r)) "lethal hit sets dead?")
+    (assert (approx= (:health r) 0.0) "dead health clamped to 0")
+    (assert (= (:state r) :idle) "death preserves state"))
+  ;; Damage on a dead enemy is a no-op (idempotent).
+  (let [dead (assoc (ent/make-enemy [0.0 0.0 0.0] 0.0) :dead? true :health 0.0)
+        r    (ent/receive-damage dead 50.0 [1.0 0.0 0.0] 5.0 (fn [] 0.0))]
+    (assert (true? (:dead? r)) "dead stays dead")
+    (assert (approx= (:health r) 0.0) "dead health stays 0"))
+  ;; Grunt spec: health 40, texture 17, model grunt; idle by default.
+  (let [g (ent/make-grunt [0.0 0.0 0.0] 0.0 0)]
+    (assert (approx= (:health g) ent/grunt-health) "grunt health = 40")
+    (assert (= (:texture g) ent/grunt-texture) "grunt texture = 17")
+    (assert (= (:model g) :grunt) "grunt model = :grunt")
+    (assert (= (:state g) :idle) "grunt with patrol-dir 0 starts idle"))
+  ;; Grunt patrol: faces +/-X, state patrol.
+  (let [g1 (ent/make-grunt [0.0 0.0 0.0] 0.0 1)
+        g2 (ent/make-grunt [0.0 0.0 0.0] 0.0 -1)]
+    (assert (= (:state g1) :patrol) "grunt patrol-dir 1 -> patrol")
+    (assert (approx= (:target-yaw g1) (/ Math/PI 2)) "patrol +1 faces +X (yaw pi/2)")
+    (assert (approx= (:target-yaw g2) (- (/ Math/PI 2))) "patrol -1 faces -X (yaw -pi/2)"))
+  ;; Grunt survives 39 dmg (alive) and dies on the 40th.
+  (let [g (ent/make-grunt [0.0 0.0 0.0] 0.0 0)]
+    (assert (not (:dead? (ent/receive-damage g 39.0 [1.0 0.0 0.0] 5.0 (fn [] 0.0)))) "grunt survives 39 dmg")
+    (assert (true? (:dead? (ent/receive-damage g 40.0 [1.0 0.0 0.0] 5.0 (fn [] 0.0)))) "grunt dies on 40 dmg"))
+  (println "entity combat: damage/wake/lethal/idempotent + grunt spec ok")
+
+  ;; --- player health/damage/death (entity_player._receive_damage/_kill) ------
+  ;; q1k3 player: 100 hp, subtract on hit, dead at <=0. No armor / no i-frames.
+  (let [p {:health 100.0 :dead? false}]
+    (assert (approx= (:health (player/hurt-player p 30.0)) 70.0) "player loses 30 hp")
+    (assert (not (:dead? (player/hurt-player p 30.0))) "alive at 70 hp"))
+  ;; Lethal: dead? true, health clamped to 0.
+  (let [r (player/hurt-player {:health 25.0 :dead? false} 40.0)]
+    (assert (true? (:dead? r)) "player dies at <0 hp")
+    (assert (approx= (:health r) 0.0) "dead health clamped to 0"))
+  ;; Dead player takes no further damage (idempotent).
+  (let [r (player/hurt-player {:health 0.0 :dead? true} 50.0)]
+    (assert (:dead? r) "dead stays dead")
+    (assert (approx= (:health r) 0.0) "dead health unchanged"))
+  ;; Exact boundary: 100 - 100 = 0 -> dead.
+  (let [r (player/hurt-player {:health 100.0 :dead? false} 100.0)]
+    (assert (true? (:dead? r)) "0 hp is death")
+    (assert (approx= (:health r) 0.0) "boundary health 0"))
+  (println "player combat: health/hurt/lethal/boundary ok")
+
+  ;; --- map-trace line of sight (q1k3 map.js) --------------------------------
+  ;; Pure over a hand-built solid-cells set. Cells are 32x16x32 (x>>5, y>>4,
+  ;; z>>5). block-at? maps a world point to its cell and tests membership.
+  (let [cells #{[0 0 0]}]
+    (assert (lvl/block-at? cells 0.0 0.0 0.0) "origin cell is solid")
+    (assert (lvl/block-at? cells 16.0 0.0 0.0) "x=16 -> cell(0,0,0) solid")
+    (assert (lvl/block-at? cells 31.0 15.0 31.0) "corner -> cell(0,0,0) solid")
+    (assert (not (lvl/block-at? cells 32.0 0.0 0.0)) "x=32 -> cell(1,0,0) empty")
+    (assert (not (lvl/block-at? cells 0.0 16.0 0.0)) "y=16 -> cell(0,1,0) empty"))
+  ;; map-trace: clear path -> nil (no obstruction).
+  (let [cells #{}]
+    (assert (nil? (lvl/map-trace cells [0.0 8.0 8.0] [120.0 8.0 8.0])) "clear path -> nil"))
+  ;; map-trace: solid cell on the path -> hit point (march 16-unit steps, first
+  ;; sample is one step AFTER the start). Ray +X into cell(1,0,0)=world x[32,64).
+  (let [cells #{[1 0 0]}]
+    (let [hit (lvl/map-trace cells [0.0 0.0 0.0] [100.0 0.0 0.0])]
+      (assert (some? hit) "blocked path -> hit point, not nil")
+      ;; steps: (16,0,0)->cell0 empty; (32,0,0)->cell1 SOLID. hit=[32,0,0].
+      (assert (approx= (nth hit 0) 32.0) "hit x = 32 (first sample in cell(1,0,0))")
+      (assert (approx= (nth hit 1) 0.0) "hit y preserved")
+      (assert (approx= (nth hit 2) 0.0) "hit z preserved")))
+  ;; map-trace: solid cell just past the endpoint is NOT hit (steps = len/16).
+  (let [cells #{[3 0 0]}]                                ; cell(3,0,0)=world x[96,128)
+    (assert (nil? (lvl/map-trace cells [0.0 0.0 0.0] [80.0 0.0 0.0]))
+            "solid past endpoint not sampled (len/16 steps)"))
+  ;; map-trace: coincident points -> nil (no steps, no obstruction).
+  (assert (nil? (lvl/map-trace #{} [5.0 5.0 5.0] [5.0 5.0 5.0])) "coincident -> nil")
+  (println "map trace: block-at? / clear / blocked / out-of-range / coincident ok")
+
+  ;; --- enemy-view: the geometry bridge (player + cells -> FSM view) ----------
+  ;; enemy-view is pure over (cells, player-pos, enemy). It computes the view
+  ;; map {dist angle can-see} that step-enemy consumes — closing the loop between
+  ;; the voxel LOS (map-trace) and the FSM without coupling them.
+  (let [cells #{}]
+    (let [v (ent/enemy-view cells [0.0 0.0 0.0] {:pos [100.0 0.0 0.0]})]
+      (assert (approx= (:dist v) 100.0) "dist = 100 on +X")
+      ;; enemy at +X faces the player at origin -> looks toward -X -> angle -pi/2.
+      (assert (< (Math/abs (- (:angle v) (- (/ Math/PI 2)))) 0.01) "angle = -pi/2 (player due -X)")
+      (assert (true? (:can-see v)) "clear LOS -> can-see true"))
+    ;; wall cell between enemy(+X) and player blocks LOS.
+    (let [wall #{[1 0 0]}                               ; cell x[32,64), sits between 0 and 100
+          v (ent/enemy-view wall [0.0 0.0 0.0] {:pos [100.0 0.0 0.0]})]
+      (assert (false? (:can-see v)) "wall between -> can-see false")
+      (assert (approx= (:dist v) 100.0) "dist unaffected by LOS"))
+    ;; a wall NOT on the segment does not block.
+    (let [off #{[0 0 5]}]                                ; far off the line of sight
+      (assert (true? (:can-see (ent/enemy-view off [0.0 0.0 0.0] {:pos [100.0 0.0 0.0]})))
+              "off-path wall does not block")))
+  (println "enemy view: dist/angle/can-see over cells + player ok")
+
+  ;; --- step-enemies: the per-tick fold (enemies x cells x player -> [new dmg]) -
+  ;; Pure fold: each enemy gets a view, is stepped, and if it fires this tick its
+  ;; shot damage accumulates. Returns [new-enemies total-damage-this-tick].
+  ;; --- step-enemies: the per-tick fold (enemies x cells x player -> [new dmg]) -
+  ;; Pure fold: each enemy gets a view, is stepped, and if it fires this tick its
+  ;; shot damage accumulates. Returns [new-enemies total-damage-this-tick]. We
+  ;; trigger a REAL fire by putting a grunt in :attack-prepare past its deadline:
+  ;; stepping auto-advances to :attack-exec, which sets :fire-now (see entity FSM
+  ;; test above). The fold must turn that :fire-now into enemy-shot-damage.
+  (let [cells #{}
+        view  {:dist 50.0 :angle 0.0 :can-see true}
+        ;; grunt close to player, locked into attack-prepare (update-at ~0.4).
+        prep  (-> (ent/make-grunt [50.0 0.0 0.0] 0.0 0)
+                  (ent/set-state :attack-prepare 0.0 (fn [] 0.0)))]
+    ;; step at t=0.6 (> update-at) -> attack-prepare advances to attack-exec -> fire.
+    (let [[enemies dmg] (ent/step-enemies cells [0.0 0.0 0.0] [prep] 0.6 0.016 (fn [] 0.0))]
+      (assert (approx= dmg ent/enemy-shot-damage) "firing grunt deals one shot via the fold")
+      (assert (= (:state (first enemies)) :attack-exec) "folded enemy is now in attack-exec")
+      (assert (not (:fire-now (first enemies))) "fold strips the transient :fire-now"))
+    ;; an idle grunt (no LOS trigger) deals no damage this tick.
+    (let [idle (ent/make-grunt [800.0 0.0 0.0] 0.0 0)   ; beyond wake distance
+          [_ dmg2] (ent/step-enemies cells [0.0 0.0 0.0] [idle] 0.6 0.016 (fn [] 0.0))]
+      (assert (approx= dmg2 0.0) "idle grunt beyond wake range deals no damage")))
+  (println "enemy fold: step-enemies fire-accumulation ok")
+
+  ;; --- fp-view handedness: world +X must render screen-RIGHT and forward +Z
+  ;; must go INTO the screen, matching q1k3's left-handed projection
+  ;; (clip.x = world.x). The raw glimmer-gl look-at uses s = cross(f, up) = -X
+  ;; at yaw 0, which mirrors X; render/fp-view composes an X mirror to un-mirror
+  ;; it. This mirror is the root cause of the reversed left/right controls
+  ;; (strafe and mouse-yaw): wish-accel/look are faithful q1k3 (right = +X) but
+  ;; the mirrored view put +X on screen-left.
+  (let [v (render/fp-view [0.0 0.0 0.0] [0.0 0.0 1.0])    ; eye at origin, +Z forward
+        m (mat/->vec v)                                   ; 16 column-major floats
+        xform-x (fn [px py pz] (+ (* (nth m 0)  px) (* (nth m 4)  py) (* (nth m 8)  pz) (nth m 12)))
+        xform-z (fn [px py pz] (+ (* (nth m 2)  px) (* (nth m 6)  py) (* (nth m 10) pz) (nth m 14)))
+        raw (mat/->vec (mat/look-at [0.0 0.0 0.0] [0.0 0.0 1.0] [0.0 1.0 0.0]))]
+    (assert (pos? (xform-x 1.0 0.0 0.0)) "world +X -> camera +x (screen right)")
+    (assert (neg? (xform-z 0.0 0.0 1.0)) "world +Z (forward) -> camera -z (into screen)")
+    (assert (neg? (nth raw 0)) "raw look-at mirrors X (world +X -> camera -x): the bug we fix"))
+  (println "fp-view handedness: world +X screen-right, +Z into screen ok")
+
+  ;; --- perf micro-benchmark: persistent vector vs native buffer indexed access --
+  ;; mix-frame-buffer (the enemy blend) is the hot path (~71ms/frame for 1 enemy);
+  ;; it indexes the model's :verts persistent vector (~9792 floats) ~2856×/frame
+  ;; and builds a 1632-element out vector via conj. This measures per-access cost
+  ;; of vector nth vs a native float buffer to confirm the cause and pick a fast
+  ;; replacement. Stride pattern (* i 31) avoids sequential cache-friendly access.
+  (let [n      9792
+        reps   2856
+        pv     (vec (for [i (range n)] (double i)))
+        t-pv   (let [t0 (System/nanoTime)]
+                 (loop [i 0 sum 0.0]
+                   (if (>= i reps) sum
+                       (recur (inc i) (+ sum (double (nth pv (mod (* i 31) n)))))))
+                 (- (System/nanoTime) t0))
+        nb     (let [p (ffi/alloc (* n (ffi/sizeof :float)))]
+                 (dotimes [i n] (ffi/write p :float (* i 4) (double i)))
+                 p)
+        t-nb   (let [t0 (System/nanoTime)]
+                 (loop [i 0 sum 0.0]
+                   (if (>= i reps) sum
+                       (recur (inc i) (+ sum (ffi/read nb :float (* (mod (* i 31) n) 4))))))
+                 (- (System/nanoTime) t0))
+        t-conj (let [t0 (System/nanoTime)]
+                 (loop [i 0 out []]
+                   (if (>= i n) out (recur (inc i) (conj out (double i)))))
+                 (- (System/nanoTime) t0))]
+    (println (str "[bench] pv nth  " (double (/ t-pv reps 1000.0))
+                  " us/op  (total " (double (/ t-pv 1000000.0)) " ms for " reps " reads)"))
+    (println (str "[bench] nb read " (double (/ t-nb reps 1000.0))
+                  " us/op  (total " (double (/ t-nb 1000000.0)) " ms for " reps " reads)"))
+    (println (str "[bench] pv conj build n=" n ": " (double (/ t-conj 1000000.0)) " ms"))
+    (ffi/free nb))
+
+  ;; --- FP camera handedness: strafe (D=+X) and yaw turn must both be correct ---
+  ;; wish-accel is a faithful q1k3 port: D (right) -> world +X at yaw 0; W ->
+  ;; world +Z (forward). Both are verified through the EXACT FP camera the
+  ;; renderer uses (view = mirror * look-at, mirror = scaling -1 1 1) via the
+  ;; library's own transform-point (no hand-rolled matrix math — that once gave a
+  ;; false "inverted" verdict). Camera-space x' sign = screen side (mirror is
+  ;; baked into the view; projection doesn't flip x).
+  (let [cam-x (fn [yaw p]
+                (let [fwd  [(double (* (Math/cos 0.0) (Math/sin yaw))) 0.0
+                            (double (* (Math/cos 0.0) (Math/cos yaw)))]
+                      view (mat/mul (mat/scaling -1.0 1.0 1.0)
+                                    (mat/look-at [0.0 0.0 0.0] fwd [0.0 1.0 0.0]))
+                      cs   (mat/transform-point view p)]
+                  (nth cs 0)))
+        ;; strafe: world +X (D) must be screen-right => cam-x > 0 at yaw 0
+        strafe-r (cam-x 0.0 [100.0 0.0 100.0])
+        strafe-l (cam-x 0.0 [-100.0 0.0 100.0])
+        ;; turn: mouse-right increases yaw (look); a fixed ahead point (0,0,1)
+        ;; must move screen-LEFT => cam-x(yaw+0.5) < 0
+        turn-pos (cam-x 0.5  [0.0 0.0 1.0])
+        turn-neg (cam-x -0.5 [0.0 0.0 1.0])]
+    (println (str "[cam] strafe  +X=" (double strafe-r) " (screen-" (if (pos? strafe-r) "RIGHT ok" "LEFT BAD")
+                  ")   -X=" (double strafe-l)))
+    (println (str "[cam] turn   yaw+0.5 cam-x=" (double turn-pos)
+                  " => point moves " (if (neg? turn-pos) "LEFT (correct)" "RIGHT (INVERTED)")))
+    (println (str "[cam] turn   yaw-0.5 cam-x=" (double turn-neg)
+                  " (should mirror: " (if (pos? turn-neg) "ok" "BAD") ")")))
+
+  ;; --- weapon: hitscan + shotgun damage (Issue #53) ---------------------------
+  ;; ray-aabb (slab): unit +Z ray vs a box centered 200 ahead, half [12 28 12].
+  (assert (approx= 188.0 (wpn/ray-aabb [0.0 0.0 0.0] [0.0 0.0 1.0]
+                                        [0.0 0.0 200.0] [12.0 28.0 12.0]))
+          "ray-aabb: +Z ray enters box at z=200-12=188")
+  (assert (nil? (wpn/ray-aabb [0.0 0.0 0.0] [0.0 0.0 1.0]
+                              [100.0 0.0 200.0] [12.0 28.0 12.0]))
+          "ray-aabb: X-offset ray misses")
+  (assert (nil? (wpn/ray-aabb [0.0 0.0 0.0] [0.0 0.0 -1.0]
+                              [0.0 0.0 200.0] [12.0 28.0 12.0]))
+          "ray-aabb: box behind the ray -> miss")
+  ;; hitscan: clear corridor, grunt dead-ahead -> :enemy idx 0 at the near face.
+  (let [g (ent/make-grunt [0.0 0.0 200.0] 0.0 0)
+        h (wpn/hitscan #{} [0.0 0.0 0.0] [0.0 0.0 1.0] [g])]
+    (assert (= :enemy (:kind h)) "hitscan: grunt in line -> :enemy")
+    (assert (zero? (:idx h))     "hitscan: hit idx 0")
+    (assert (approx= 188.0 (:dist h)) "hitscan: enemy dist = near face 188"))
+  ;; hitscan: grunt off-axis, no geometry -> miss (nil).
+  (let [g (ent/make-grunt [200.0 0.0 200.0] 0.0 0)]
+    (assert (nil? (wpn/hitscan #{} [0.0 0.0 0.0] [0.0 0.0 1.0] [g]))
+            "hitscan: off-axis grunt + no wall -> miss"))
+  ;; hitscan: a wall cell on the z-axis (cz=3 ~ world z=96) occludes the grunt.
+  (let [g (ent/make-grunt [0.0 0.0 200.0] 0.0 0)
+        h (wpn/hitscan #{[0 0 3]} [0.0 0.0 0.0] [0.0 0.0 1.0] [g])]
+    (assert (= :wall (:kind h)) "hitscan: wall cell occludes grunt")
+    (assert (approx= 96.0 (:dist h)) "hitscan: wall hit at z=96"))
+  ;; fire-shot: a 40hp grunt dies in two shells (24,24 -> 16, then -8); dead culled.
+  (let [g0  (ent/make-grunt [0.0 0.0 200.0] 0.0 0)
+        dir [0.0 0.0 1.0]
+        rng (fn [] 0.0)]
+    (let [[v1 _] (wpn/fire-shot #{} [0.0 0.0 0.0] dir [g0] 0.0 rng)
+          h1    (:health (nth v1 0))]
+      (assert (approx= 16.0 h1) (str "fire-shot #1: 40-24=16, got " h1)))
+    (let [[v2 _] (wpn/fire-shot #{} [0.0 0.0 0.0] dir
+                                [(assoc g0 :health 16.0)] 0.0 rng)]
+      (assert (zero? (count v2)) "fire-shot #2: lethal -> dead grunt culled")))
+  (println "weapon: ray-aabb / hitscan / fire-shot ok")
+
+  (println "check: ok"))
