@@ -12,8 +12,12 @@
             [fps-demo.player    :as player]
             [fps-demo.model     :as model]
             [fps-demo.models.unit :as unit]
-             [fps-demo.entity    :as ent]
-             [fps-demo.weapon    :as wpn]
+              [fps-demo.entity    :as ent]
+              [fps-demo.weapon    :as wpn]
+              [fps-demo.particle  :as part]
+              [fps-demo.pickup    :as pkup]
+              [fps-demo.hud       :as hud]
+              [fps-demo.overlay   :as ov]
             [glimmer-gl.matrix  :as mat]
             [jolt.ffi           :as ffi]
             [glimmer-gl.gtk]))                         ; side-effect: widget registry
@@ -807,5 +811,125 @@
                                 [(assoc g0 :health 16.0)] 0.0 rng)]
       (assert (zero? (count v2)) "fire-shot #2: lethal -> dead grunt culled")))
   (println "weapon: ray-aabb / hitscan / fire-shot ok")
+
+  ;; --- respawn: a dead player resets to spawn at full health (q1k3 game_init) -
+  ;; player/_kill sets dead; game_init(map_index) after 2s re-spawns the player.
+  ;; respawn-player folds that reset into the state map: position/velocity/
+  ;; on-ground/look reset, health back to max, dead? cleared. :time is preserved.
+  (let [dead {:p [100.0 200.0 300.0] :v [5.0 5.0 5.0] :a [1.0 0.0 0.0]
+              :on-ground true :yaw 1.2 :pitch 0.4 :f 10
+              :health 0.0 :dead? true :time 42.0 :keys #{:forward}}
+        r    (player/respawn-player dead [10.0 20.0 30.0])]
+    (assert (not (:dead? r)) "respawn clears dead?")
+    (assert (approx= player/player-max-health (:health r)) "respawn restores full health")
+    (assert (approx= 10.0 (nth (:p r) 0)) "respawn moves player to spawn x")
+    (assert (approx= 30.0 (nth (:p r) 2)) "respawn moves player to spawn z")
+    (assert (approx= 0.0 (nth (:v r) 0)) "respawn zeroes velocity")
+    (assert (approx= 0.0 (:yaw r)) "respawn resets yaw")
+    (assert (approx= 0.0 (:pitch r)) "respawn resets pitch")
+    (assert (approx= 42.0 (:time r)) "respawn preserves game time")
+    (assert (= #{:forward} (:keys r)) "respawn preserves held keys"))
+  (println "player respawn: dead -> spawn/full-health/no-velocity ok")
+
+  ;; --- particles: spawn N blood, gravity integrates, life culls (q1k3 _spawn) -
+  ;; entity_t._spawn_particles: v = ((rand-0.5)*spd, rand*spd, (rand-0.5)*spd),
+  ;; die_at = time + life + rand*life*0.2. With a constant rng=0.5, x/z drift is
+  ;; zero and vy = blood-speed; gravity pulls vy down over the step.
+  (let [rng   (fn [] 0.5)
+        ps    (part/spawn-blood [0.0 0.0 0.0] 6 rng)]
+    (assert (= 6 (count ps)) "spawn-blood makes N particles")
+    (doseq [p ps]
+      (assert (pos? (:life p)) "particle has positive life")
+      (assert (approx= (:life p) (:max-life p)) "fresh particle life == max-life"))
+    ;; one step: vy decreases by gravity*dt, pos advances by vel*dt
+    (let [dt     0.05
+          ps2    (part/step-particles ps dt)
+          vy0    (nth (:vel (first ps)) 1)
+          vy1    (nth (:vel (first ps2)) 1)]
+      (assert (approx= (+ vy0 (* part/particle-grav dt)) vy1)
+              (str "step: vy += gravity*dt; got " vy1 " from " vy0))
+      ;; particle moved: pos.y increased (vy0>0) then this step
+      (assert (> (nth (:pos (first ps2)) 1) 0.0) "step: particle rose this tick"))
+    ;; exhaust life -> all culled
+    (let [dead-all (loop [q ps n 0]
+                     (if (or (empty? q) (> n 200)) q
+                         (recur (part/step-particles q 0.05) (inc n))))]
+      (assert (zero? (count dead-all)) "particles culled once life expires")))
+  (println "particle: spawn/step-gravity/life-cull ok")
+
+  ;; --- pickups: health +25 within 40u, consume; outside / consumed = no-op -----
+  ;; entity_pickup_t._update: if (vec3_dist(this.p, player.p) < 40) pickup().
+  ;; health: +25 then kill. apply-pickups folds all pickups against one player.
+  (let [near (pkup/make-health-pickup [30.0 0.0 0.0])   ; dist 30 < 40
+        far  (pkup/make-health-pickup [0.0 0.0 50.0])   ; dist 50 >= 40
+        used (assoc (pkup/make-health-pickup [10.0 0.0 0.0]) :consumed? true)
+        pl   {:p [0.0 0.0 0.0] :health 50.0}]
+    (assert (= :health (:type near)) "health pickup typed")
+    (assert (approx= pkup/health-amount (:amount near)) "health pickup amount 25")
+    (let [[pl' [n' f' u']] (pkup/apply-pickups pl [near far used])]
+      (assert (approx= 75.0 (:health pl')) (str "near pickup heals +25 -> 75, got " (:health pl')))
+      (assert (:consumed? n') "near pickup consumed after apply")
+      (assert (not (:consumed? f')) "far pickup not consumed")
+      (assert (:consumed? u') "already-consumed stays consumed-marked")
+      ;; a second apply on the result heals nothing more (near now consumed)
+      (let [[pl2 _] (pkup/apply-pickups pl' [n' f' u'])]
+        (assert (approx= 75.0 (:health pl2)) "no double-heal from consumed pickup"))
+      ;; far + an already-consumed pickup alone heal nothing (stays at base 50)
+      (let [[pl-far _] (pkup/apply-pickups pl [far used])]
+        (assert (approx= 50.0 (:health pl-far)) "far/used alone heal nothing"))))
+  (println "pickup: health +25 in radius / consume / idempotent ok")
+
+  ;; --- HUD: bar fill clamps 0..1; muzzle flash window is muzzle-duration -------
+  ;; bar-fill maps the live health to a [0,1] fill, clamped at both ends so a
+  ;; dead player shows an empty bar and overheal never overflows it.
+  (assert (approx= 1.0 (hud/bar-fill hud/player-max-health)) "full health -> full bar")
+  (assert (approx= 0.5 (hud/bar-fill (/ hud/player-max-health 2.0))) "half health -> half bar")
+  (assert (approx= 0.0 (hud/bar-fill 0.0)) "dead -> empty bar")
+  (assert (approx= 0.0 (hud/bar-fill -10.0)) "negative -> clamped to 0")
+  (assert (approx= 1.0 (hud/bar-fill 999.0)) "overheal -> clamped to 1")
+  ;; muzzle flash: visible for muzzle-duration after fire, then off; nil fire-time = off
+  (assert (true?  (hud/muzzle-active? 1.00 0.97)) "flash on within window")
+  (assert (false? (hud/muzzle-active? 1.00 0.90)) "flash off after window")
+  (assert (false? (hud/muzzle-active? 5.00 nil))  "no fire ever -> no flash")
+  (println "hud: bar-fill clamp + muzzle-flash window ok")
+
+  ;; --- overlay geometry: HUD bar / blood boxes / viewmodel (flat shader) -------
+  ;; Each builder returns interleaved pos3+color3 floats (6/vertex, 6 verts/quad).
+  ;; hud-bar: a background quad + a fill quad => 2 quads = 12 verts = 72 floats;
+  ;;   the fill quad width tracks the health fraction.
+  (let [full (ov/hud-bar-verts 800 600 1.0)
+        half (ov/hud-bar-verts 800 600 0.5)]
+    (assert (= 72 (count full)) (str "hud bar = 2 quads = 72 floats, got " (count full)))
+    ;; fill at half health uses half the bar width (spot-check: a fill vertex's
+    ;; x is ~half the background's right edge)
+    (let [bg-left    (nth full 0)   ; bg vert0.x
+          bg-right   (nth full 6)   ; bg vert1.x
+          fill-left  (nth half 36)  ; fill quad vert0.x
+          fill-right (nth half 42)  ; fill quad vert1.x
+          bg-w   (- bg-right bg-left)
+          fill-w (- fill-right fill-left)]
+      (assert (approx= (* bg-w 0.5) fill-w)
+              (str "half-health fill is half-width: bg-w=" bg-w " fill-w=" fill-w))))
+  ;; particle-box: 36 verts per particle (a cube = 12 tris), 6 floats/vert
+  (let [ps  [{:pos [1.0 2.0 3.0]} {:pos [4.0 5.0 6.0]}]
+        fv  (ov/particle-box-verts ps)]
+    (assert (= (* 36 6 2) (count fv)) (str "2 particles => 432 floats, got " (count fv))))
+  ;; viewmodel: at least one gun quad; muzzle flash adds geometry (more floats)
+  (let [idle  (ov/viewmodel-verts false)
+        flash (ov/viewmodel-verts true)]
+    (assert (>= (count flash) (count idle)) "flash viewmodel has >= verts than idle")
+    (assert (> (count idle) 0) "viewmodel always draws something")
+    ;; the builders must return a FLAT float vector (pos3+color3, 6/vertex), not a
+    ;; nested structure — draw-flat! uploads (count verts)/6 vertices straight to
+    ;; the VBO, so any nesting silently breaks the upload.
+    (let [flat? (fn [v] (and (pos? (count v))
+                             (zero? (rem (count v) 6))
+                             (every? #(instance? Number %) v)))]
+      (assert (flat? idle)  (str "viewmodel idle is a flat float vector; got count=" (count idle)))
+      (assert (flat? flash) (str "viewmodel flash is a flat float vector; got count=" (count flash)))
+      ;; idle is 4 body quads (24 verts = 144 floats); flash adds 1 quad (30 verts).
+      (assert (approx= 144.0 (double (count idle)))  (str "idle = 4 quads = 144 floats; got " (count idle)))
+      (assert (approx= 180.0 (double (count flash))) (str "flash = 5 quads = 180 floats; got " (count flash)))))
+  (println "overlay: hud-bar / particle-box / viewmodel vert counts ok")
 
   (println "check: ok"))

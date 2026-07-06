@@ -16,7 +16,9 @@
             [fps-demo.map       :as lvl]
             [fps-demo.maps.l    :as lvl-data]
             [fps-demo.model     :as model]
-            [fps-demo.models.unit :as unit]))
+            [fps-demo.models.unit :as unit]
+            [fps-demo.overlay   :as ov]
+            [fps-demo.hud       :as hud]))
 
 ;; pixel-format constants not exported by glimmer-gl (its renderer is texture-free)
 (def ^:private GL-RGBA8          (int 0x8058))
@@ -105,8 +107,8 @@
 
 (defn init!
   "Compile the q1k3 pipeline + upload the whole static level into one VBO. Call
-  once, with a current GL context (i.e. from on-realize). Returns the opaque
-  state map, including the camera eye/look derived from the player spawn."
+   once, with a current GL context (i.e. from on-realize). Returns the opaque
+   state map, including the camera eye/look derived from the player spawn."
   []
   (let [{:keys [vs-src fs-src]} (shader/sources sh/lit-spec)
         prog (gl/make-program vs-src fs-src)]
@@ -132,15 +134,33 @@
       (gl/gl-enable-vertex-attrib-array 2)                 ; a_normal(location 2)
       (gl/gl-vertex-attrib-pointer 2 3 gl/GL-FLOAT GL-FALSE stride 20)
       (gl/gl-bind-vertex-array 0)
-      {:prog prog :vao vao :tex (make-texture) :count (:count geo)
-        :eye eye
-        :enemy (init-enemies!)
-        :loc {:mvp        (u "u_mvp")
-              :model      (u "u_model")
-              :tex        (u "u_tex")
-              :light-pos  (u "u_light_pos")
-              :light-col  (u "u_light_col")
-              :light-dist (u "u_light_dist")}})))
+      ;; flat (unlit) program + one dynamic overlay VAO/VBO shared by the HUD bar,
+      ;; blood particles, and the first-person viewmodel (pos3+color3, stride 24).
+      (let [{fvs :vs-src ffs :fs-src} (shader/sources sh/flat-spec)
+            fprog (gl/make-program fvs ffs)]
+        (assert fprog "q1k3 flat shader failed to compile/link")
+        (let [fu      (fn [^String n] (gl/gl-get-uniform-location fprog n))
+              fovao   (gl/gen-one gl/gl-gen-vertex-arrays)
+              fovbo   (gl/gen-one gl/gl-gen-buffers)
+              fstride 24]
+          (gl/gl-bind-vertex-array fovao)
+          (gl/gl-bind-buffer gl/GL-ARRAY-BUFFER fovbo)
+          (gl/gl-enable-vertex-attrib-array 0)             ; a_pos   (location 0)
+          (gl/gl-vertex-attrib-pointer 0 3 gl/GL-FLOAT GL-FALSE fstride 0)
+          (gl/gl-enable-vertex-attrib-array 1)             ; a_color (location 1)
+          (gl/gl-vertex-attrib-pointer 1 3 gl/GL-FLOAT GL-FALSE fstride 12)
+          (gl/gl-bind-vertex-array 0)
+          {:prog prog :vao vao :tex (make-texture) :count (:count geo)
+           :eye eye
+           :enemy (init-enemies!)
+           :flat {:prog fprog :vao fovao :vbo fovbo
+                  :loc {:mvp (fu "u_mvp")}}
+           :loc {:mvp        (u "u_mvp")
+                 :model      (u "u_model")
+                 :tex        (u "u_tex")
+                 :light-pos  (u "u_light_pos")
+                 :light-col  (u "u_light_col")
+                 :light-dist (u "u_light_dist")}})))))
 
 (defn- upload-mat4
   "Write a 4×4 matrix to a uniform location as column-major (transpose=FALSE)."
@@ -170,13 +190,36 @@
                          (+ (nth eye 2) (nth forward 2))]
                         [0.0 1.0 0.0])))
 
+(defn- draw-flat!
+  "Upload interleaved pos3+color3 floats to the flat overlay VBO and draw them
+  with the given model-view-projection. `verts` is a flat seq of Float (6/vert).
+  Uses one dynamic buffer for the HUD, blood, and viewmodel — each pass rebinds
+  the program, uploads, and draws."
+  [state mvp verts]
+  (let [f      (:flat state)
+        n      (count verts)
+        nverts (quot n 6)]
+    (when (pos? nverts)
+      (gl/gl-use-program (:prog f))
+      (gl/gl-bind-vertex-array (:vao f))
+      (gl/gl-bind-buffer gl/GL-ARRAY-BUFFER (:vbo f))
+      (let [ptr (gl/write-floats verts)]
+        (gl/gl-buffer-data gl/GL-ARRAY-BUFFER
+                           (* (ffi/sizeof :float) n)
+                           ptr GL-DYNAMIC-DRAW)
+        (ffi/free ptr))
+      (upload-mat4 (get-in f [:loc :mvp]) mvp)
+      (gl/gl-draw-arrays gl/GL-TRIANGLES 0 nverts)
+      (gl/gl-bind-vertex-array 0))))
+
 (defn draw!
   "Render one frame: the full static q1k3 level from the player's eye, lit by a
-  single point light, then each enemy (vertex-animated grunt) at its own world
-  pose. `state` is the map from init!; w/h are drawable; `cam` is
-  {:eye [x y z] :yaw :pitch} — the first-person camera; `enemies` is the live
-  enemy list from game state."
-  [state w h cam enemies]
+   single point light, then each enemy (vertex-animated grunt) at its own world
+   pose, then the screen-space HUD bar, the world-space blood particles, and the
+   first-person shotgun viewmodel. `state` is the map from init!; w/h are
+   drawable; `cam` is {:eye [x y z] :yaw :pitch} — the first-person camera;
+   `enemies` is the live enemy list; `hud` is {:health :fire-time :particles}."
+  [state w h cam enemies hud]
   (gl/gl-viewport 0 0 w h)
   (gl/gl-clear-color 0.05 0.06 0.08 1.0)
   (gl/gl-clear (bit-or gl/GL-COLOR-BUFFER-BIT gl/GL-DEPTH-BUFFER-BIT))
@@ -204,7 +247,25 @@
     (gl/gl-bind-vertex-array (:vao state))
     (gl/gl-draw-arrays gl/GL-TRIANGLES 0 (:count state))
     (gl/gl-bind-vertex-array 0)
-    (draw-enemies! state proj view locs enemies)))
+    (draw-enemies! state proj view locs enemies)
+    ;; --- overlays (flat shader) -----------------------------------------------
+    ;; HUD bar + viewmodel are screen-space (ortho); blood particles reuse the
+    ;; world proj*view so they sit in the level. depth-test off so overlays paint
+    ;; over the world, then back on for the next frame.
+    (let [ortho (mat/ortho 0.0 (double w) 0.0 (double h) -1.0 1.0)
+          world (mat/mul proj view)
+          hmap  (or hud {})]
+      (gl/gl-disable gl/GL-DEPTH-TEST)
+      (when-let [fill (:health hmap)]
+        (draw-flat! state ortho
+                    (ov/hud-bar-verts w h (hud/bar-fill (double fill)))))
+      (when-let [parts (:particles hmap)]
+        (when (pos? (count parts))
+          (draw-flat! state world (ov/particle-box-verts parts))))
+      (draw-flat! state ortho
+                  (ov/viewmodel-verts (hud/muzzle-active? (:time hmap)
+                                                          (:fire-time hmap))))
+      (gl/gl-enable gl/GL-DEPTH-TEST))))
 
 ;; --- enemy model matrix (pure, #52[C]) --------------------------------------
 ;; Composed per-enemy for the u_model uniform. Column-major M = T · Ry · S, so a

@@ -1,0 +1,102 @@
+(ns fps-demo.overlay
+  "Pure overlay geometry builders for the q1k3 port. Produces flat interleaved
+  [x y z r g b ...] float lists for the flat shader (pos3 + color3, stride 6).
+  GL-free and unit-tested; render.clj uploads and draws these.
+
+  All builders return a Clojure vector of Float, 6 per vertex (2 triangles = 6
+  verts = 36 floats per quad). Coordinate spaces:
+    - hud-bar-verts:        screen pixels (drawn under an ortho projection)
+    - particle-box-verts:   world units (drawn under proj*view)
+    - viewmodel-verts:      screen pixels (drawn under ortho), bottom-right")
+
+(def ^:const hud-margin   20.0)   ; px inset from bottom-left
+(def ^:const hud-bar-w  200.0)
+(def ^:const hud-bar-h   16.0)
+
+(def ^:const particle-half 1.6)   ; blood blob half-size in world units
+
+;; Unit cube corners in [-1,1]^3.
+(def ^:private cube-corners
+  [[-1.0 -1.0 -1.0] [1.0 -1.0 -1.0] [1.0 1.0 -1.0] [-1.0 1.0 -1.0]
+   [-1.0 -1.0  1.0] [1.0 -1.0  1.0] [1.0 1.0  1.0] [-1.0 1.0  1.0]])
+
+;; 12 triangles (CCW outward) as index triples into cube-corners.
+(def ^:private cube-tris
+  [[0 1 2] [0 2 3]   ; -Z
+   [4 6 5] [4 7 6]   ; +Z
+   [0 3 7] [0 7 4]   ; -X
+   [1 5 6] [1 6 2]   ; +X
+   [0 4 5] [0 5 1]   ; -Y
+   [3 2 6] [3 6 7]]) ; +Y
+
+(defn- quad
+  "Two-triangle XY quad from (x0,y0) to (x1,y1) at depth z, colored [r g b].
+  Returns 6 vertices × 6 floats (36 floats)."
+  [x0 y0 x1 y1 z [r g b]]
+  [x0 y0 z r g b
+   x1 y0 z r g b
+   x1 y1 z r g b
+   x0 y0 z r g b
+   x1 y1 z r g b
+   x0 y1 z r g b])
+
+(defn hud-bar-verts
+  "Health bar: a dark background quad + a colored fill quad whose width tracks
+  `fill` (0..1). Anchored bottom-left with a margin. 2 quads = 72 floats."
+  [w h fill]
+  (let [x0 hud-margin
+        y0 hud-margin
+        x1 (+ hud-margin hud-bar-w)
+        y1 (+ hud-margin hud-bar-h)
+        fill-x1 (+ x0 (* hud-bar-w (double fill)))
+        bg   (quad x0 y0 x1 y1 0.0 [0.12 0.12 0.14])
+        fcol (if (<= fill 0.25) [0.85 0.15 0.10] [0.15 0.75 0.20])
+        fg   (if (<= fill 0.0) [] (quad x0 y0 fill-x1 y1 0.1 fcol))]
+    (into bg fg)))
+
+(defn particle-box-verts
+  "One axis-aligned cube per particle at its :pos, dark red, half-size
+  particle-half. 36 verts × 6 floats per particle."
+  [particles]
+  (let [col [0.60 0.05 0.05]]
+    (loop [ps particles acc []]
+      (if (empty? ps) acc
+          (let [[px py pz] (:pos (first ps))
+                s particle-half
+                tris (loop [ts cube-tris out []]
+                       (if (empty? ts) out
+                           (let [[ai bi ci] (first ts)
+                                 [ax ay az] (nth cube-corners ai)
+                                 [bx by bz] (nth cube-corners bi)
+                                 [cx cy cz] (nth cube-corners ci)
+                                 vtx (fn [x y z]
+                                       [(* (+ px x) 1.0) ; x scaled+translated
+                                        (* (+ py y) 1.0)
+                                        (* (+ pz z) 1.0)
+                                        (col 0) (col 1) (col 2)])
+                                 face (-> (vtx (* ax s) (* ay s) (* az s))
+                                          (into (vtx (* bx s) (* by s) (* bz s)))
+                                          (into (vtx (* cx s) (* cy s) (* cz s))))]
+                             (recur (rest ts) (into out face)))))]
+            (recur (rest ps) (into acc tris)))))))
+
+(defn viewmodel-verts
+  "Procedural shotgun viewmodel in screen pixels (ortho), bottom-right. A few
+  stacked quads suggest a barrel + pump + stock; when `flash?` is true an extra
+  bright muzzle quad is appended near the barrel tip."
+  [flash?]
+  ;; Gun body: stock, receiver, barrel, pump — drawn bottom-right of the screen.
+  (let [gun-gray   [0.20 0.20 0.22]
+        gun-dark   [0.12 0.12 0.14]
+        stock-brn  [0.30 0.20 0.12]
+        quads [;; stock (lower-left of the gun)
+               (quad  840.0  0.0 940.0 70.0 0.1 stock-brn)
+               ;; receiver
+               (quad  840.0 60.0 980.0 110.0 0.1 gun-dark)
+               ;; barrel
+               (quad  970.0 80.0 1180.0 98.0 0.1 gun-gray)
+               ;; pump grip
+               (quad  980.0 50.0 1040.0 82.0 0.1 gun-gray)]
+        base   (reduce into [] quads)
+        muzzle (quad 1175.0 78.0 1215.0 100.0 0.2 [1.0 0.85 0.30])]
+    (if flash? (into base muzzle) base)))

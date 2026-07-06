@@ -11,9 +11,11 @@
             [fps-demo.render :as render]
             [fps-demo.player :as player]
             [fps-demo.map    :as lvl]
-            [fps-demo.entity :as ent]
-            [fps-demo.weapon :as wpn]
-            [fps-demo.maps.l :as lvl-data]))
+             [fps-demo.entity :as ent]
+             [fps-demo.weapon :as wpn]
+             [fps-demo.particle :as part]
+             [fps-demo.pickup :as pkup]
+             [fps-demo.maps.l :as lvl-data]))
 
 (def ^:private ^:const tick 0.016666667)   ; fixed 1/60 s per frame (q1k3 fixed-step)
 
@@ -55,10 +57,16 @@
                             :last-x  nil
                             :last-y  nil
                             :fire-request false
-                           :health  player/player-max-health
-                           :dead?   false
-                           :time    0.0
-                           :enemies (spawn-grunts)}))
+                            :health  player/player-max-health
+                            :dead?   false
+                            :death-time nil
+                            :time    0.0
+                            :enemies (spawn-grunts)
+                            :particles []
+                            :pickups  [(pkup/make-health-pickup
+                                         [(nth spawn-eye 0)
+                                          (nth spawn-eye 1)
+                                          (+ (nth spawn-eye 2) 100.0)])]}))
 
 ;; WASD + arrows -> movement keyword; Space jumps.
 (def ^:private keyval-kw
@@ -87,7 +95,7 @@
   ;; release just drops the held-down marker.
   (swap! game assoc :lmb-down pressed?)
   (when pressed?
-    (swap! game assoc :fire-request true)))
+    (swap! game (fn [g] (assoc g :fire-request true :fire-time (:time g))))))
 
 (defn- on-motion [_area x y]
   ;; Always look (drag-to-look dropped in favor of left-click-to-fire): the
@@ -102,42 +110,72 @@
                  (assoc g :yaw yaw' :pitch pitch' :last-x x :last-y y)))))))
 
 (defn- on-tick [_area]
-  ;; Build this frame's acceleration from held keys + grounded state, integrate,
-  ;; then step the enemy squad against the new player position: each enemy that
-  ;; fires this tick deals enemy-shot-damage, applied to the player in one fold.
+  ;; Per-frame update. A dead player is frozen (q1k3 player/_kill) and re-spawns
+  ;; 2 s later at info_player_start (game_init). While alive: build acceleration
+  ;; from held keys, integrate, step the enemy squad (each firing enemy deals
+  ;; enemy-shot-damage in one fold), consume any pending fire request (hitscan
+  ;; from the eye; blood spawns where the ray strikes an enemy), integrate
+  ;; particles, fold in pickups, then apply damage and check for death.
   (swap! game
          (fn [g]
-           (let [intent   (zipmap [:forward :back :left :right]
-                                  (map #(if ((:keys g) %) 1 0) [:forward :back :left :right]))
-                 grounded (:on-ground g)
-                 a        (player/wish-accel intent (:yaw g) grounded)
-                 phys     (player/step-physics
-                            cells
-                            {:p (:p g) :v (:v g) :a a :f (if grounded 10 2.5)
-                             :on-ground grounded}
-                            tick)
-                 time'    (+ (:time g) tick)
-                 [enemies dmg] (ent/step-enemies cells (:p phys) (:enemies g)
-                                                 time' tick (fn [] (Math/random)))
-                  p0       (-> g
-                               (assoc :p (:p phys) :v (:v phys) :a a
-                                      :on-ground (:on-ground phys)
-                                      :time time'
-                                      :enemies enemies))
-                  ;; Consume a pending fire request: raycast from the eye along
-                  ;; the view direction, apply shotgun damage to the nearest hit.
-                  p1       (if (:fire-request p0)
-                             (let [eye [(nth (:p phys) 0)
-                                        (+ (nth (:p phys) 1) eye-offset)
-                                        (nth (:p phys) 2)]
-                                   dir (player/forward (:yaw p0) (:pitch p0))
-                                   [en' _] (wpn/fire-shot cells eye dir (:enemies p0)
-                                                           time' (fn [] (Math/random)))]
-                               (assoc p0 :enemies en' :fire-request false))
-                             p0)]
-              (if (pos? dmg)
-                (player/hurt-player p1 dmg)
-                p1)))))
+           (if (:dead? g)
+             ;; DEAD: only the respawn timer advances. After 2 s, reset to spawn.
+             (let [time' (+ (:time g) tick)]
+               (if (> (- time' (or (:death-time g) time')) 2.0)
+                 (-> (player/respawn-player g spawn-eye)
+                     (assoc :enemies (spawn-grunts)
+                            :particles [] :death-time nil :time time'))
+                 (assoc g :time time')))
+             ;; ALIVE: full per-frame update.
+             (let [intent   (zipmap [:forward :back :left :right]
+                                    (map #(if ((:keys g) %) 1 0) [:forward :back :left :right]))
+                   grounded (:on-ground g)
+                   a        (player/wish-accel intent (:yaw g) grounded)
+                   phys     (player/step-physics
+                              cells
+                              {:p (:p g) :v (:v g) :a a :f (if grounded 10 2.5)
+                               :on-ground grounded}
+                              tick)
+                   time'    (+ (:time g) tick)
+                   [enemies dmg] (ent/step-enemies cells (:p phys) (:enemies g)
+                                                   time' tick (fn [] (Math/random)))
+                   p0       (-> g
+                                (assoc :p (:p phys) :v (:v phys) :a a
+                                       :on-ground (:on-ground phys)
+                                       :time time'
+                                       :enemies enemies))
+                   ;; Consume a pending fire request: raycast from the eye along
+                   ;; the view direction, apply shotgun damage to the nearest hit,
+                   ;; and spawn blood particles where the ray struck an enemy.
+                   [p1 blood] (if (:fire-request p0)
+                                (let [eye [(nth (:p phys) 0)
+                                           (+ (nth (:p phys) 1) eye-offset)
+                                           (nth (:p phys) 2)]
+                                      dir (player/forward (:yaw p0) (:pitch p0))
+                                      [en' hit] (wpn/fire-shot cells eye dir (:enemies p0)
+                                                               time' (fn [] (Math/random)))]
+                                  [(assoc p0 :enemies en' :fire-request false)
+                                   (when (= :enemy (:kind hit))
+                                     (let [d (:dist hit)]
+                                       (part/spawn-blood [(+ (nth eye 0) (* (nth dir 0) d))
+                                                          (+ (nth eye 1) (* (nth dir 1) d))
+                                                          (+ (nth eye 2) (* (nth dir 2) d))]
+                                                         8 (fn [] (Math/random)))))])
+                                [p0 nil])
+                   ;; integrate particles (existing stepped + freshly spawned blood)
+                   p2       (assoc p1 :particles
+                                   (part/step-particles
+                                     (if blood (into (:particles p1) blood) (:particles p1))
+                                     tick))
+                   ;; fold in pickups: heals the player within pickup radius
+                   [p3 pickups'] (pkup/apply-pickups p2 (:pickups p2))
+                   p4       (assoc p3 :pickups pickups')
+                   ;; enemy fire -> hurt; death if health drained
+                   p5       (if (pos? dmg) (player/hurt-player p4 dmg) p4)
+                   p6       (if (<= (:health p5) 0.0)
+                              (assoc p5 :dead? true :death-time time')
+                              p5)]
+               p6)))))
 
 (defn- realize! [_area]
   (reset! render-state (render/init!))
@@ -153,9 +191,13 @@
           g    @game
           ;; camera eye = collision center + eye-offset (eye at top of head)
           eye  [(nth (:p g) 0) (+ (nth (:p g) 1) eye-offset) (nth (:p g) 2)]
-          cam  {:eye eye :yaw (:yaw g) :pitch (:pitch g)}]
+          cam  {:eye eye :yaw (:yaw g) :pitch (:pitch g)}
+          hud  {:health    (:health g)
+                :particles (:particles g)
+                :fire-time (:fire-time g)
+                :time      (:time g)}]
       (try
-        (render/draw! s w h cam (:enemies g))
+        (render/draw! s w h cam (:enemies g) hud)
         (catch Throwable e
           (when (not @render-crash-dumped)
             (reset! render-crash-dumped true)

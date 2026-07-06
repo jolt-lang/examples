@@ -37,6 +37,20 @@
         (assoc player :health 0.0 :dead? true)
         (assoc player :health h)))))
 
+(defn respawn-player
+  "Reset a dead player back to spawn at full health. q1k3 player/_kill marks
+  the player dead, then game_init(map_index) re-spawns after a delay: position
+  and velocity reset, view angles zeroed, health restored. Game time and held
+  keys are preserved (this only resets the body, not the run)."
+  [g spawn-pos]
+  (-> g
+      (assoc :p spawn-pos)
+      (assoc :v [0.0 0.0 0.0])
+      (assoc :yaw 0.0)
+      (assoc :pitch 0.0)
+      (assoc :health player-max-health)
+      (assoc :dead? false)))
+
 ;; --- voxel AABB collision (q1k3 map_block_at_box / map_block_at) -----------
 
 (defn- floor-div

@@ -5,6 +5,22 @@
   Phase 1's per-fragment light *array* (many point lights, as in the original)
   will be declared in :prelude and set directly with gl-uniform-3fv.")
 
+(def flat-spec
+  "Unlit flat-color shader: position + per-vertex color attributes, a single
+  model-view-projection. Used for the screen-space HUD (ortho), world-space blood
+  particles, and the first-person shotgun viewmodel. Per-vertex color means each
+  pass is one upload + one draw, no color-grouping needed."
+  {:version "330 core"
+   :prelude ""
+   :uniforms {:u_mvp :mat4}
+   :attribs {:a_pos   [:vec3 0]
+             :a_color [:vec3 1]}
+   :varying {:v_color :vec3}
+   :fs-out {:frag_color :vec4}
+   :vs-main [[:set :v_color :a_color]
+             [:set :gl_Position [:* :u_mvp [:vec4 :a_pos 1.0]]]]
+   :fs-main [[:set :frag_color [:vec4 :v_color 1.0]]]})
+
 (def lit-spec
   {:version "330 core"
    :prelude ""
