@@ -320,12 +320,40 @@
 ;; re-uploaded each frame with the enemy's blended frame, then drawn at its own
 ;; world pose. Mirrors q1k3's r_u_frame_mix + per-entity model matrix.
 
+;; --- pose upload cache -------------------------------------------------------
+;; mix-frame-buffer (per-float ffi/read) + write-floats (per-float ffi/write) is
+;; the dominant per-frame cost (~1.4 ms/enemy). But a pose only changes when the
+;; frame pair flips or the blend crosses a quantized step, so memoize the built
+;; native pointer keyed by [frame-a frame-b mix-step]. The glBufferSubData that
+;; follows is a fast driver memcpy — reusing the pointer is the win.
+(def ^:private ^:const pose-mix-steps 10)
+(def ^:private pose-ptr-cache (atom {}))
+
+(defn- reset-pose-cache! []
+  (doseq [ptr (vals @pose-ptr-cache)] (ffi/free ptr))
+  (reset! pose-ptr-cache {}))
+
+(defn- pose-ptr
+  "Cached native upload pointer for enemy pose [fa fb mix]. mix is quantized to
+  pose-mix-steps; on a cache miss the frame is blended and packed once, then the
+  pointer is reused for every subsequent frame at that pose."
+  [model fa fb mix]
+  (let [q   (int (min (double (dec pose-mix-steps))
+                      (Math/floor (* (double mix) pose-mix-steps))))
+        key [fa fb q]]
+    (or (get @pose-ptr-cache key)
+        (let [buf (model/mix-frame-buffer model fa fb mix)
+              ptr (gl/write-floats (:data buf))]
+          (swap! pose-ptr-cache assoc key ptr)
+          ptr))))
+
 (defn init-enemies!
   "Parse unit.rmf into a vertex-animated grunt model and build one dynamic VBO/VAO
   using the lit shader's attrib layout (pos3/uv2/normal3, stride 32). The VBO is
   allocated DYNAMIC and re-uploaded each frame. Returns
   {:model :vao :vbo :count}; :count is verts per enemy (constant across frames)."
   []
+  (reset-pose-cache!)
   (let [m       (model/init-model unit/bytes 2.5 2.2 2.5)
         vao     (gl/gen-one gl/gl-gen-vertex-arrays)
         vbo     (gl/gen-one gl/gl-gen-buffers)
@@ -356,14 +384,11 @@
       (gl/gl-bind-buffer gl/GL-ARRAY-BUFFER vbo)
       (doseq [e enemies]
         (let [[fa fb mix] (model/enemy-frame-anim e)
-              buf         (model/mix-frame-buffer model fa fb mix)
-              ptr         (gl/write-floats (:data buf))
+              ptr         (pose-ptr model fa fb mix)
               emodel      (enemy-model-matrix e)
               emvp        (mat/mul proj (mat/mul view emodel))]
           (gl/gl-buffer-data gl/GL-ARRAY-BUFFER
-                             (* (ffi/sizeof :float) (count (:data buf)))
-                             ptr GL-DYNAMIC-DRAW)
-          (ffi/free ptr)
+                             (* nverts 32) ptr GL-DYNAMIC-DRAW)
           (upload-mat4 (:mvp locs) emvp)
           (upload-mat4 (:model locs) emodel)
           (gl/gl-draw-arrays gl/GL-TRIANGLES 0 nverts)))

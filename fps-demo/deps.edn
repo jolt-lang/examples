@@ -7,7 +7,9 @@
  ;; those deps' :jolt/native entries and merged by jolt's dependency walk.
 
  :aliases {:run   {:main-opts ["-m" "fps-demo.core"]}
-           :check {:main-opts ["-m" "fps-demo.check"]}}
+           :check {:main-opts ["-m" "fps-demo.check"]}
+           :timing {:main-opts ["-m" "fps-demo.timing"]}
+           :perf   {:main-opts ["-m" "fps-demo.perf"]}}
 
  :tasks {run   "joltc -M:run"
          check "joltc -M:check"}}

@@ -15,7 +15,7 @@
 (def ^:const substep-size 16.0)      ; max units moved per collision substep
 (def ^:const jump-vel     400.0)
 (def ^:const accel-speed  3000.0)    ; horizontal acceleration magnitude
-(def ^:const mouse-sens   0.00015)
+(def ^:const mouse-sens   0.00075)
 (def ^:const pitch-limit  1.5)
 (def ^:const half         [12.0 24.0 12.0])   ; player AABB half-extents
 (def ^:const step-height  17.0)

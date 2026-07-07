@@ -54,31 +54,35 @@
         fg   (if (<= fill 0.0) [] (quad x0 y0 fill-x1 y1 0.1 fcol))]
     (into bg fg)))
 
+;; 36 corner refs (3 per tri × 12 tris) into cube-corners, in emit order, so the
+;; per-particle loop is a flat aset stream with no intermediate allocation.
+(def ^:private part-corner-idx
+  (into [] (for [[a b c] cube-tris t [a b c]] t)))
+
 (defn particle-box-verts
   "One axis-aligned cube per particle at its :pos, dark red, half-size
-  particle-half. 36 verts × 6 floats per particle."
+  particle-half. 36 verts × 6 floats per particle. Emits straight into a
+  float-array (aset) rather than building Clojure vectors — the particle count
+  changes every frame, so this runs hot."
   [particles]
-  (let [col [0.60 0.05 0.05]]
-    (loop [ps particles acc []]
-      (if (empty? ps) acc
-          (let [[px py pz] (:pos (first ps))
-                s particle-half
-                tris (loop [ts cube-tris out []]
-                       (if (empty? ts) out
-                           (let [[ai bi ci] (first ts)
-                                 [ax ay az] (nth cube-corners ai)
-                                 [bx by bz] (nth cube-corners bi)
-                                 [cx cy cz] (nth cube-corners ci)
-                                 vtx (fn [x y z]
-                                       [(* (+ px x) 1.0) ; x scaled+translated
-                                        (* (+ py y) 1.0)
-                                        (* (+ pz z) 1.0)
-                                        (col 0) (col 1) (col 2)])
-                                 face (-> (vtx (* ax s) (* ay s) (* az s))
-                                          (into (vtx (* bx s) (* by s) (* bz s)))
-                                          (into (vtx (* cx s) (* cy s) (* cz s))))]
-                             (recur (rest ts) (into out face)))))]
-            (recur (rest ps) (into acc tris)))))))
+  (let [s   (double particle-half)
+        r   0.60 g 0.05 b 0.05
+        out (float-array (* (count particles) 216))]
+    (loop [ps particles base 0]
+      (if (empty? ps) out
+          (let [pos (:pos (first ps))
+                px (double (pos 0)) py (double (pos 1)) pz (double (pos 2))
+                nb (loop [i 0 k base]
+                     (if (>= i 36) k
+                         (let [c (nth cube-corners (nth part-corner-idx i))]
+                           (aset out k       (+ px (* (double (c 0)) s)))
+                           (aset out (inc k) (+ py (* (double (c 1)) s)))
+                           (aset out (+ k 2) (+ pz (* (double (c 2)) s)))
+                           (aset out (+ k 3) r)
+                           (aset out (+ k 4) g)
+                           (aset out (+ k 5) b)
+                           (recur (inc i) (+ k 6)))))]
+            (recur (rest ps) nb))))))
 
 (defn viewmodel-verts
   "Procedural shotgun viewmodel in screen pixels (ortho), bottom-right. A few
