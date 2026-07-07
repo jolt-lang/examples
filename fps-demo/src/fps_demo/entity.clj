@@ -10,7 +10,8 @@
 
   jolt does NOT bridge Math/atan2 or Math/hypot, so this module ships a
   hand-rolled atan2 (rational approx, ~0.005 rad) and an exact anglemod."
-  (:require [fps-demo.map :as lvl]))
+  (:require [fps-demo.map    :as lvl]
+            [fps-demo.player :as player]))
 
 ;; --- animation table (entity_enemy._ANIMS): [period, [frame-indices]] -------
 (def ANIMS
@@ -177,6 +178,7 @@
      :turn-bias 0.0, :state :idle,
      :health base-health, :on-ground true, :dead? false,
      :speed enemy-speed, :half enemy-half, :step-height step-height,
+     :keep-off-ledges true,
      :wake-distance wake-distance, :attack-distance attack-distance,
      :evade-distance evade-distance, :attack-chance attack-chance}
     :idle 0.0 (fn [] 0.0)))
@@ -257,14 +259,37 @@
 (defn- advance-anim [enemy dt]
   (update enemy :anim-time #(+ % dt)))
 
-(defn step-enemy [enemy view game-time dt rng]
-  (let [enemy (dissoc enemy :fire-now)
-        after (if (< (:state-update-at enemy) game-time)
-                (state-update enemy view game-time rng)
-                enemy)]
-    (-> (yaw-lerp after)
-        (apply-velocity)
-        (advance-anim dt))))
+;; integrate-enemy: run the enemy's velocity through the shared substepped
+;; collision integrator (player/step-physics) — position, gravity, stair-step,
+;; wall rollback, keep-off-ledges. On a horizontal wall/ledge stop, apply q1k3
+;; entity_enemy._did_collide: a patrolling enemy turns 180°, everyone else turns
+;; by its current turn-bias (±0.5). Enemies have no friction (.f 0) and re-set
+;; their horizontal velocity from state speed each frame (apply-velocity).
+(defn- integrate-enemy [cells enemy dt]
+  (let [st {:p (:pos enemy) :v (:vel enemy) :a [0.0 0.0 0.0] :f 0 :gravity 1
+            :on-ground (:on-ground enemy) :half (:half enemy)
+            :step-height (:step-height enemy step-height) :bounciness 0.0
+            :keep-off-ledges (:keep-off-ledges enemy false)}
+        r  (player/step-physics cells st dt)
+        e2 (assoc enemy :pos (:p r) :vel (:v r) :on-ground (:on-ground r))]
+    (if (:collided r)
+      (if (= :patrol (:state e2))
+        (update e2 :target-yaw + Math/PI)
+        (update e2 :target-yaw + (:turn-bias e2 0.0)))
+      e2)))
+
+;; step-enemy: one frame of AI + motion. The 6-arg form integrates the enemy
+;; through the world (`cells`); the 5-arg form skips physics (used by the pure
+;; FSM/velocity unit tests, which don't supply a map).
+(defn step-enemy
+  ([enemy view game-time dt rng] (step-enemy enemy view game-time dt rng nil))
+  ([enemy view game-time dt rng cells]
+   (let [enemy (dissoc enemy :fire-now)
+         after (if (< (:state-update-at enemy) game-time)
+                 (state-update enemy view game-time rng)
+                 enemy)
+         moved (apply-velocity (yaw-lerp after))]
+     (advance-anim (if cells (integrate-enemy cells moved dt) moved) dt))))
 
 ;; --- damage / death / type-spec construction ---------------------------------
 ;; entity_enemy._receive_damage: base subtracts health & kills; enemy override
@@ -330,24 +355,24 @@
      :angle   (angle-to-player ep player-pos)
      :can-see (nil? (lvl/map-trace cells ep player-pos))}))
 
-;; Per-shot damage a grunt deals when it fires (q1k3 entity_enemy fires ~4 dmg).
-(def ^:const enemy-shot-damage 4.0)
-
 ;; step-enemies: pure per-tick fold. Steps every enemy against its view of the
-;; player, then folds any :fire-now into an accumulated damage total. Returns
-;; [new-enemies total-damage-this-tick]. Dead enemies are culled.
+;; player and collects the ones that entered :attack-exec this tick (their
+;; :fire-now is set). Returns [new-enemies fired]: `new-enemies` have :fire-now
+;; stripped (it's a per-frame transient); `fired` is the post-step enemy maps
+;; that fired, which the caller turns into projectiles via projectile/enemy-attack
+;; (q1k3 entity_enemy._attack spawns a shell/plasma/grenade/gib rather than
+;; dealing instant damage). Melee (hound) sets no :fire-now — see step-melee.
 (defn step-enemies [cells player-pos enemies game-time dt rng]
-  (loop [in   (seq enemies)
-         out  []
-         dmg  0.0]
+  (loop [in    (seq enemies)
+         out   []
+         fired []]
     (if-let [e (first in)]
       (let [view (enemy-view cells player-pos e)
-            e'   (step-enemy e view game-time dt rng)
-            hit  (if (:fire-now e') enemy-shot-damage 0.0)]
+            e'   (step-enemy e view game-time dt rng cells)]
         (recur (next in)
                (conj out (dissoc e' :fire-now))
-               (+ dmg hit)))
-      [out dmg])))
+               (if (:fire-now e') (conj fired e') fired)))
+      [out fired])))
 
 ;; melee-contact: the hound's lunge deals damage on contact (entity_enemy_hound
 ;; _did_collide_with_entity), once per :attack-exec (guarded by :did-hit). Called
@@ -369,3 +394,16 @@
         [(assoc enemy :did-hit true) (:melee-damage enemy 0.0)]
         [enemy 0.0]))
     [enemy 0.0]))
+
+;; step-melee: fold hound melee contact against the player over the whole enemy
+;; list. Returns [new-enemies total-melee-damage]; each lunging hound overlapping
+;; the player deals :melee-damage once (guarded by :did-hit on the returned
+;; enemy). Non-melee enemies contribute 0.
+(defn step-melee [enemies player-pos player-half]
+  (loop [in   (seq enemies)
+         out  []
+         dmg  0.0]
+    (if-let [e (first in)]
+      (let [[e' d] (melee-contact e player-pos player-half)]
+        (recur (next in) (conj out e') (+ dmg d)))
+      [out dmg])))

@@ -20,6 +20,7 @@
             [fps-demo.model     :as model]
             [fps-demo.models.unit :as unit]
             [fps-demo.overlay   :as ov]
+            [fps-demo.light     :as light]
             [fps-demo.hud       :as hud]))
 
 ;; pixel-format constants not exported by glimmer-gl (its renderer is texture-free)
@@ -28,6 +29,26 @@
 (def ^:private GL-UNSIGNED-BYTE  (int 0x1401))
 (def ^:private GL-FALSE          (int 0))
 (def ^:private GL-DYNAMIC-DRAW   (int 0x88E8))
+
+;; libc file write, for the offscreen screenshot path (glReadPixels -> raw file).
+;; Only used behind FPS_DEMO_SHOT; keeps a headless visual-verification hook.
+(ffi/defcfn ^:private c-fopen  "fopen"  [:string :string] :pointer)
+(ffi/defcfn ^:private c-fwrite "fwrite" [:pointer :size_t :size_t :pointer] :size_t)
+(ffi/defcfn ^:private c-fclose "fclose" [:pointer] :int)
+
+(defn save-screenshot!
+  "Read the current framebuffer (w×h RGBA) and write it as raw bytes to `path`
+  via libc fwrite. Must run with the GL context current (i.e. from on-render).
+  Returns [w h] — pixels are bottom-row-first (GL origin), so the reader flips."
+  [w h path]
+  (let [n   (* (int w) (int h) 4)
+        ptr (ffi/alloc n)]
+    (gl/gl-read-pixels 0 0 (int w) (int h) GL-RGBA GL-UNSIGNED-BYTE ptr)
+    (let [f (c-fopen path "wb")]
+      (c-fwrite ptr 1 n f)
+      (c-fclose f))
+    (ffi/free ptr)
+    [w h]))
 
 (defn- lcg-rng
   "A deterministic 0-arg float [0,1) generator (fixed seed) so the baked noise
@@ -187,9 +208,7 @@
                    :model      (u "u_model")
                    :tex        (u "u_tex")
                    :num-tex    (u "u_num_textures")
-                   :light-pos  (u "u_light_pos")
-                   :light-col  (u "u_light_col")
-                   :light-dist (u "u_light_dist")}}))))))
+                   :lights     (u "u_lights")}}))))))
 
 (defn- upload-mat4
   "Write a 4×4 matrix to a uniform location as column-major (transpose=FALSE)."
@@ -241,9 +260,28 @@
       (gl/gl-draw-arrays gl/GL-TRIANGLES 0 nverts)
       (gl/gl-bind-vertex-array 0))))
 
+(defn- frame-lights
+  "The dynamic point lights active this frame (q1k3 r_push_light callers). A warm
+  lamp follows the player so the near field is visible until torches exist; a
+  bright muzzle flash while firing; plasma/grenade projectiles glow; and any
+  transient explosion flashes (`:lights` from the game state). rgb are 0-255."
+  [cam hud]
+  (let [eye (:eye cam)
+        base [{:pos [(nth eye 0) (+ (nth eye 1) 8.0) (nth eye 2)]
+               :intensity 10.0 :color [255.0 235.0 205.0]}]
+        muzzle (when (hud/muzzle-active? (:time hud) (:fire-time hud))
+                 [{:pos eye :intensity 12.0 :color [255.0 240.0 180.0]}])
+        projs (keep (fn [p]
+                      (case (:kind p)
+                        :plasma  {:pos (:pos p) :intensity 5.0 :color [255.0 128.0 0.0]}
+                        :grenade {:pos (:pos p) :intensity 1.5 :color [255.0 40.0 0.0]}
+                        nil))
+                    (:projectiles hud))]
+    (concat base muzzle projs (:lights hud))))
+
 (defn draw!
-  "Render one frame: the full static q1k3 level from the player's eye, lit by a
-   single point light, then each enemy (vertex-animated grunt) at its own world
+  "Render one frame: the full static q1k3 level from the player's eye, lit by the
+   dynamic point-light array, then each enemy (vertex-animated grunt) at its own world
    pose, then the screen-space HUD bar, the world-space blood particles, and the
    first-person shotgun viewmodel. `state` is the map from init!; w/h are
    drawable; `cam` is {:eye [x y z] :yaw :pitch} — the first-person camera;
@@ -271,13 +309,21 @@
     (gl/gl-bind-texture gl/GL-TEXTURE-2D (:tex state))
     (gl/gl-uniform-1i (:tex locs) 0)
     (gl/gl-uniform-1f (:num-tex locs) (double (:num-tex state)))
-    (gl/gl-uniform-3f (:light-pos locs) ex (+ ey 64.0) ez)
-    (gl/gl-uniform-3f (:light-col locs) 1.0 0.85 0.6)
-    (gl/gl-uniform-1f (:light-dist locs) 512.0)
+    ;; upload the dynamic point-light array (two vec3 per light)
+    (let [arr (light/pack-lights (frame-lights cam (or hud {})) (:eye cam))
+          ptr (gl/write-floats arr)]
+      (gl/gl-uniform-3fv (:lights locs) (* light/max-lights 2) ptr)
+      (ffi/free ptr))
     (gl/gl-bind-vertex-array (:vao state))
     (gl/gl-draw-arrays gl/GL-TRIANGLES 0 (:count state))
     (gl/gl-bind-vertex-array 0)
     (draw-enemies! state proj view locs enemies)
+    ;; in-flight projectiles: colored cubes in world space, depth-tested so walls
+    ;; and enemies occlude them (drawn before the depth-test is disabled below).
+    (when-let [projs (:projectiles hud)]
+      (let [pv (ov/projectile-box-verts projs)]
+        (when (pos? (count pv))
+          (draw-flat! state (mat/mul proj view) pv))))
     ;; --- overlays (flat shader) -----------------------------------------------
     ;; HUD bar + viewmodel are screen-space (ortho); blood particles reuse the
     ;; world proj*view so they sit in the level. depth-test off so overlays paint

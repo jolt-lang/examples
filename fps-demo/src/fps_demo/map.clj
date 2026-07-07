@@ -89,16 +89,6 @@
           (bit-shift-left (bit-and (int cy) 255) 8)
           (bit-and (int cz) 255)))
 
-(defn cell-key
-  "Pack a collision-grid cell (cx,cy,cz) into one long so the solid-cell set
-  hashes/compares a primitive rather than a 3-vector (far cheaper to build and
-  query). Grid is 128^3 (cell coords 0..127); the 0xFF mask keeps out-of-level
-  queries (negative or >=128) from aliasing real cells."
-  [cx cy cz]
-  (bit-or (bit-shift-left (bit-and (int cx) 255) 16)
-          (bit-shift-left (bit-and (int cy) 255) 8)
-          (bit-and (int cz) 255)))
-
 (defn solid-cells
   "Set of packed cell-keys (see cell-key) occupied by `blocks` -- the collision
   map. Each block fills the full [x,x+sx) x [y,y+sy) x [z,z+sz) grid box. Built

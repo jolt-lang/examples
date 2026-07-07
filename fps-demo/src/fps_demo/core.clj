@@ -12,7 +12,7 @@
             [fps-demo.player :as player]
             [fps-demo.map    :as lvl]
              [fps-demo.entity :as ent]
-             [fps-demo.weapon :as wpn]
+             [fps-demo.projectile :as proj]
              [fps-demo.particle :as part]
              [fps-demo.pickup :as pkup]
              [fps-demo.capture :as capture]
@@ -72,7 +72,9 @@
                             :death-time nil
                             :time    0.0
                             :enemies (spawn-grunts)
+                            :projectiles []
                             :particles []
+                            :lights []
                             :pickups  [(pkup/make-health-pickup
                                          [(nth spawn-eye 0)
                                           (nth spawn-eye 1)
@@ -136,13 +138,81 @@
                                                     :invert (:mouse-invert g)})]
                    (assoc g :yaw yaw' :pitch pitch' :last-x x :last-y y))))))))
 
+(defn- dist3 [a b]
+  (let [dx (- (double (nth a 0)) (double (nth b 0)))
+        dy (- (double (nth a 1)) (double (nth b 1)))
+        dz (- (double (nth a 2)) (double (nth b 2)))]
+    (Math/sqrt (+ (* dx dx) (* dy dy) (* dz dz)))))
+
+(defn- explosion-light
+  "A transient q1k3 explosion flash (entity_light: bright, fades over ~0.2 s)."
+  [pos time]
+  {:pos pos :color [64.0 140.0 255.0] :intensity0 200.0
+   :spawn time :die-at (+ time 0.2)})
+
+(defn- apply-projectile-events
+  "Fold the effect events from proj/step-projectiles into the world. Player-team
+  hits/explosions damage enemies (via ent/receive-damage, so idle enemies wake);
+  enemy-team hits/explosions accumulate player damage; :fx events request impact
+  particles; explosions also emit a transient flash light. Returns
+  {:enemies e' :player-dmg d :fx [particles] :lights [flashes]}. `enemies` must be
+  the same list step-projectiles saw (a :hit :idx indexes into it)."
+  [events enemies player-pos time rng]
+  (loop [evs (seq events) enemies enemies pdmg 0.0 fx [] lights []]
+    (if-let [ev (first evs)]
+      (case (:t ev)
+        :hit
+        (if (= :player (:team ev))
+          (let [i (:idx ev) e (nth enemies i nil)]
+            (recur (next evs)
+                   (if e (assoc enemies i (ent/receive-damage e (:amount ev) player-pos time rng))
+                         enemies)
+                   pdmg
+                   ;; blood at the struck enemy (q1k3 enemy._receive_damage)
+                   (if e (into fx (part/spawn-blood (:pos e) 3 rng)) fx)
+                   lights))
+          (recur (next evs) enemies (+ pdmg (:amount ev)) fx lights))
+        :explode
+        (let [lights' (conj lights (explosion-light (:pos ev) time))]
+          (if (= :player (:team ev))
+            (recur (next evs)
+                   (mapv (fn [e]
+                           (let [d (proj/splash-damage (dist3 (:pos e) (:pos ev))
+                                                       (:radius ev) (:amount ev))]
+                             (if (pos? d) (ent/receive-damage e d player-pos time rng) e)))
+                         enemies)
+                   pdmg fx lights')
+            (recur (next evs) enemies
+                   (+ pdmg (proj/splash-damage (dist3 player-pos (:pos ev))
+                                               (:radius ev) (:amount ev)))
+                   fx lights')))
+        :fx
+        (recur (next evs) enemies pdmg
+               (into fx (part/spawn-blood (:pos ev) (:n ev) rng)) lights)
+        (recur (next evs) enemies pdmg fx lights))
+      {:enemies enemies :player-dmg pdmg :fx fx :lights lights})))
+
+(defn- decay-lights
+  "Advance transient flash lights: drop expired ones, and set each survivor's
+  current :intensity by linear fade from :intensity0 over [spawn, die-at]."
+  [lights time]
+  (->> lights
+       (keep (fn [l]
+               (when (> (:die-at l) time)
+                 (assoc l :intensity
+                        (* (:intensity0 l)
+                           (/ (- (:die-at l) time) (- (:die-at l) (:spawn l))))))))
+       vec))
+
 (defn- on-tick [_area]
   ;; Per-frame update. A dead player is frozen (q1k3 player/_kill) and re-spawns
   ;; 2 s later at info_player_start (game_init). While alive: build acceleration
-  ;; from held keys, integrate, step the enemy squad (each firing enemy deals
-  ;; enemy-shot-damage in one fold), consume any pending fire request (hitscan
-  ;; from the eye; blood spawns where the ray strikes an enemy), integrate
-  ;; particles, fold in pickups, then apply damage and check for death.
+  ;; from held keys and integrate the player; step the enemy squad — each ranged
+  ;; enemy that fires this tick spawns a projectile (q1k3 entity_enemy._attack),
+  ;; and lunging hounds deal melee contact damage; a pending fire request throws
+  ;; 8 shotgun shell projectiles from the eye; then step every projectile against
+  ;; the enemies + the player, apply the resulting damage/impact particles, fold
+  ;; in pickups, and check for death.
   (swap! game
          (fn [g]
            (if (:dead? g)
@@ -151,10 +221,12 @@
                (if (> (- time' (or (:death-time g) time')) 2.0)
                  (-> (player/respawn-player g spawn-eye)
                      (assoc :enemies (spawn-grunts)
-                            :particles [] :death-time nil :time time'))
+                            :projectiles [] :particles [] :lights []
+                            :death-time nil :time time'))
                  (assoc g :time time')))
              ;; ALIVE: full per-frame update.
-             (let [intent   (zipmap [:forward :back :left :right]
+             (let [rng      (fn [] (Math/random))
+                   intent   (zipmap [:forward :back :left :right]
                                     (map #(if ((:keys g) %) 1 0) [:forward :back :left :right]))
                    grounded (:on-ground g)
                    [mdx mdy]     (if (:cursor-locked? g) (capture/delta) [0.0 0.0])
@@ -169,45 +241,49 @@
                                :on-ground grounded}
                               tick)
                    time'    (+ (:time g) tick)
-                   [enemies dmg] (ent/step-enemies cells (:p phys) (:enemies g)
-                                                   time' tick (fn [] (Math/random)))
-                   p0       (-> g
-                                (assoc :yaw yaw' :pitch pitch')
-                                (assoc :p (:p phys) :v (:v phys) :a a
-                                       :on-ground (:on-ground phys)
-                                       :time time'
-                                       :enemies enemies))
-                   ;; Consume a pending fire request: raycast from the eye along
-                   ;; the view direction, apply shotgun damage to the nearest hit,
-                   ;; and spawn blood particles where the ray struck an enemy.
-                   [p1 blood] (if (:fire-request p0)
-                                (let [eye [(nth (:p phys) 0)
-                                           (+ (nth (:p phys) 1) eye-offset)
-                                           (nth (:p phys) 2)]
-                                      dir (player/forward yaw' pitch')
-                                      [en' hit] (wpn/fire-shot cells eye dir (:enemies p0)
-                                                               time' (fn [] (Math/random)))]
-                                  [(assoc p0 :enemies en' :fire-request false)
-                                   (when (= :enemy (:kind hit))
-                                     (let [d (:dist hit)]
-                                       (part/spawn-blood [(+ (nth eye 0) (* (nth dir 0) d))
-                                                          (+ (nth eye 1) (* (nth dir 1) d))
-                                                          (+ (nth eye 2) (* (nth dir 2) d))]
-                                                         8 (fn [] (Math/random)))))])
-                                [p0 nil])
-                   ;; integrate particles (existing stepped + freshly spawned blood)
-                   p2       (assoc p1 :particles
-                                   (part/step-particles
-                                     (if blood (into (:particles p1) blood) (:particles p1))
-                                     tick))
+                   pcenter  (:p phys)
+                   ;; step enemy AI (collecting the ranged attackers that fired)
+                   ;; then resolve hound melee contact against the player.
+                   [enemies0 fired]     (ent/step-enemies cells pcenter (:enemies g)
+                                                          time' tick rng)
+                   [enemies1 melee-dmg] (ent/step-melee enemies0 pcenter player/half)
+                   ;; spawn this tick's projectiles: enemy ranged attacks + (on a
+                   ;; pending fire request) 8 player shotgun shells from the eye.
+                   enemy-shots  (into [] (mapcat #(proj/enemy-attack % pcenter time' rng) fired))
+                   eye          [(nth pcenter 0) (+ (nth pcenter 1) eye-offset) (nth pcenter 2)]
+                   player-shots (if (:fire-request g)
+                                  (proj/player-shotgun eye yaw' pitch' time' rng)
+                                  [])
+                   projectiles0 (-> (:projectiles g) (into enemy-shots) (into player-shots))
+                   ;; fly every projectile one tick against enemies + the player.
+                   player-target         {:pos pcenter :half player/half}
+                   [projectiles1 events] (proj/step-projectiles cells projectiles0 enemies1
+                                                                player-target time' tick)
+                   {ev-enemies :enemies proj-dmg :player-dmg fx :fx new-lights :lights}
+                   (apply-projectile-events events enemies1 pcenter time' rng)
+                   enemies2   (filterv #(not (:dead? %)) ev-enemies)
+                   particles' (part/step-particles (into (:particles g) fx) tick)
+                   ;; transient flash lights: add this tick's explosions, decay all
+                   lights'    (decay-lights (into (:lights g) new-lights) time')
+                   base       (-> g
+                                  (assoc :yaw yaw' :pitch pitch'
+                                         :p pcenter :v (:v phys) :a a
+                                         :on-ground (:on-ground phys)
+                                         :time time'
+                                         :enemies enemies2
+                                         :projectiles projectiles1
+                                         :particles particles'
+                                         :lights lights'
+                                         :fire-request false))
                    ;; fold in pickups: heals the player within pickup radius
-                   [p3 pickups'] (pkup/apply-pickups p2 (:pickups p2))
-                   p4       (assoc p3 :pickups pickups')
-                   ;; enemy fire -> hurt; death if health drained
-                   p5       (if (pos? dmg) (player/hurt-player p4 dmg) p4)
-                   p6       (if (<= (:health p5) 0.0)
-                              (assoc p5 :dead? true :death-time time')
-                              p5)]
+                   [p3 pickups'] (pkup/apply-pickups base (:pickups base))
+                   p4         (assoc p3 :pickups pickups')
+                   ;; enemy fire + melee -> hurt; death if health drained
+                   total-dmg  (+ melee-dmg proj-dmg)
+                   p5         (if (pos? total-dmg) (player/hurt-player p4 total-dmg) p4)
+                   p6         (if (<= (:health p5) 0.0)
+                                (assoc p5 :dead? true :death-time time')
+                                p5)]
                p6)))))
 
 (defn- realize! [area]
@@ -225,6 +301,7 @@
 (defn- resize!  [_area w h] (reset! size [w h]))
 
 (def ^:private render-crash-dumped (atom false))
+(def ^:private shot-taken (atom false))
 
 (defn- render!  [_area]
   (when-let [s @render-state]
@@ -233,12 +310,24 @@
           ;; camera eye = collision center + eye-offset (eye at top of head)
           eye  [(nth (:p g) 0) (+ (nth (:p g) 1) eye-offset) (nth (:p g) 2)]
           cam  {:eye eye :yaw (:yaw g) :pitch (:pitch g)}
-          hud  {:health    (:health g)
-                :particles (:particles g)
-                :fire-time (:fire-time g)
-                :time      (:time g)}]
+          hud  {:health      (:health g)
+                :particles   (:particles g)
+                :projectiles (:projectiles g)
+                :lights      (:lights g)
+                :fire-time   (:fire-time g)
+                :time        (:time g)}]
       (try
         (render/draw! s w h cam (:enemies g) hud)
+        ;; headless visual check: FPS_DEMO_SHOT=/path dumps one settled frame
+        ;; (after the scene has run ~1.5 s so enemies are awake) as raw RGBA.
+        (when-let [path (System/getenv "FPS_DEMO_SHOT")]
+          (when (and (not @shot-taken)
+                     (> (:time g) (or (some-> (System/getenv "FPS_DEMO_SHOT_AT")
+                                              Double/parseDouble)
+                                      1.5)))
+            (reset! shot-taken true)
+            (let [[sw sh] (render/save-screenshot! w h path)]
+              (binding [*out* *err*] (println (str "[fps-demo] SHOT " sw " " sh " " path))))))
         (catch Throwable e
           (when (not @render-crash-dumped)
             (reset! render-crash-dumped true)

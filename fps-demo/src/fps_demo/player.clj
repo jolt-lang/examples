@@ -74,26 +74,33 @@
               (lvl/cell-key cx cy cz))))))
 
 (defn- collides?
-  "True if the box centered at point p (half-extents h) hits any solid cell."
-  [cells p h]
-  (block-at-box? cells
-                 [(- (nth p 0) (nth h 0)) (- (nth p 1) (nth h 1)) (- (nth p 2) (nth h 2))]
-                 [(+ (nth p 0) (nth h 0)) (+ (nth p 1) (nth h 1)) (+ (nth p 2) (nth h 2))]))
+  "True if the box centered at point p (half-extents h) hits any solid cell.
+  With keep-off-ledges + on-ground set (enemies), q1k3 also treats a spot with no
+  floor just beneath the feet as a collision, so AI walks up to but not off
+  ledges — map_block_at(p, foot-8) and (foot-24) both empty => ledge => collide."
+  ([cells p h] (collides? cells p h false false))
+  ([cells p h keep-off-ledges og]
+   (or (and keep-off-ledges og
+            (not (lvl/block-at? cells (nth p 0) (- (nth p 1) (nth h 1) 8.0) (nth p 2)))
+            (not (lvl/block-at? cells (nth p 0) (- (nth p 1) (nth h 1) 24.0) (nth p 2))))
+       (block-at-box? cells
+                      [(- (nth p 0) (nth h 0)) (- (nth p 1) (nth h 1)) (- (nth p 2) (nth h 2))]
+                      [(+ (nth p 0) (nth h 0)) (+ (nth p 1) (nth h 1)) (+ (nth p 2) (nth h 2))]))))
 
 ;; --- one collision substep: per-axis rollback + stair-stepping -------------
 ;; Returns {:p [x y z] :v [x y z] :on-ground bool :stop bool} given the last
 ;; position lp, this substep's delta, incoming velocity, and flags. Mirrors the
 ;; three independent axis checks in entity_t._update_physics.
 
-(defn- substep [cells lp delta v og h sh bnc]
+(defn- substep [cells lp delta v og h sh bnc kol]
   (let [lpx (nth lp 0) lpy (nth lp 1) lpz (nth lp 2)
         sx  (nth delta 0) sy (nth delta 1) sz (nth delta 2)
         vx  (nth v 0) vy (nth v 1) vz (nth v 2)
         nx  (+ lpx sx) ny (+ lpy sy) nz (+ lpz sz)]
     ;; X axis: probe at (nx, lpy, lpz)
     (let [[x1 lpy1 vx1 st1]
-          (if (collides? cells [nx lpy lpz] h)
-            (let [above    (collides? cells [nx (+ lpy sh) lpz] h)
+          (if (collides? cells [nx lpy lpz] h kol og)
+            (let [above    (collides? cells [nx (+ lpy sh) lpz] h kol og)
                   can-step (and (pos? sh) og (<= vy 0) (not above))]
               (if can-step
                 [nx (+ lpy sh) vx true]              ; step up: keep the x move, raise y
@@ -101,22 +108,24 @@
             [nx lpy vx false])
           ;; Z axis: probe at (x1, lpy1, nz)
           [z1 lpy2 vz2 st2]
-          (if (collides? cells [x1 lpy1 nz] h)
-            (let [above    (collides? cells [x1 (+ lpy1 sh) nz] h)
+          (if (collides? cells [x1 lpy1 nz] h kol og)
+            (let [above    (collides? cells [x1 (+ lpy1 sh) nz] h kol og)
                   can-step (and (pos? sh) og (<= vy 0) (not above))]
               (if can-step
                 [nz (+ lpy1 sh) vz true]
                 [lpz lpy1 (* (- vz) bnc) true]))
             [nz lpy1 vz false])
-          ;; Y axis: probe the full new position
+          ;; Y axis: probe the full new position (plain box test, no ledge check —
+          ;; the ledge rule only stops horizontal walk-off, not vertical settle)
           y-final (if (collides? cells [x1 ny z1] h)
                     (let [bounce (if (> (Math/abs vy) 200.0) bnc 0.0)]
                       [lpy2 (* (- vy) bounce) (and (neg? vy) (zero? bounce)) true])
                     [ny vy og false])]
-      {:p         [x1 (nth y-final 0) z1]
-       :v         [vx1 (nth y-final 1) vz2]
-       :on-ground (nth y-final 2)
-       :stop      (or st1 st2 (nth y-final 3))})))
+      {:p          [x1 (nth y-final 0) z1]
+       :v          [vx1 (nth y-final 1) vz2]
+       :on-ground  (nth y-final 2)
+       :collided-h (or st1 st2)                     ; horizontal (x/z) stop, for AI turns
+       :stop       (or st1 st2 (nth y-final 3))})))
 
 ;; --- full physics step (velocity integration + substepped move) ------------
 
@@ -142,18 +151,22 @@
         inv   (/ 1.0 (double n))
         delta [(* mdx inv) (* mdy inv) (* mdz inv)]
         bnc   (get state :bounciness 0.0)
-        sh    (get state :step-height step-height)]
-    (loop [p p0 v [vx vy vz] og (boolean (:on-ground state)) k 0]
+        sh    (get state :step-height step-height)
+        hlf   (get state :half half)
+        kol   (get state :keep-off-ledges false)]
+    (loop [p p0 v [vx vy vz] og (boolean (:on-ground state)) k 0 col false]
       (if (>= k n)
         {:p p :v v :a a-in :f f
          :on-ground og :gravity (get state :gravity 1)
-         :bounciness bnc :step-height sh}
-        (let [r (substep cells p delta v og half sh bnc)]
+         :bounciness bnc :step-height sh :collided col}
+        (let [r (substep cells p delta v og hlf sh bnc kol)]
           (if (:stop r)
             {:p (:p r) :v (:v r) :a a-in :f f
              :on-ground (:on-ground r) :gravity (get state :gravity 1)
-             :bounciness bnc :step-height sh}
-            (recur (:p r) (:v r) (:on-ground r) (inc k))))))))
+             :bounciness bnc :step-height sh
+             :collided (or col (:collided-h r))}
+            (recur (:p r) (:v r) (:on-ground r) (inc k)
+                   (or col (:collided-h r)))))))))
 
 ;; --- mouse look (q1k3 entity_player _update) -------------------------------
 

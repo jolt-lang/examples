@@ -21,18 +21,33 @@
              [:set :gl_Position [:* :u_mvp [:vec4 :a_pos 1.0]]]]
    :fs-main [[:set :frag_color [:vec4 :v_color 1.0]]]})
 
+;; q1k3's dynamic point-light array (renderer.js). The shader DSL has no for-loop,
+;; so the array + the accumulation loop live in the raw prelude; `u_lights` is
+;; declared here (not in :uniforms) so it isn't re-declared, and is uploaded each
+;; frame with gl-uniform-3fv. Two vec3 per light: l[i] = position, l[i+1] = colour
+;; pre-multiplied by fade*intensity (fps-demo.light/pack-lights). 16 lights => [32].
+(def ^:private lit-prelude
+  (str
+   "uniform vec3 u_lights[32];\n"
+   "vec3 accum_light(vec3 wp, vec3 nrm){\n"
+   "  vec3 vl = vec3(0.0);\n"
+   "  for (int i = 0; i < 32; i += 2) {\n"
+   "    vec3 d = u_lights[i] - wp;\n"
+   "    float dd = dot(d, d);\n"
+   "    vl += max(dot(nrm, d / max(sqrt(dd), 0.0001)), 0.0) * (1.0 / max(dd, 1.0)) * u_lights[i+1];\n"
+   "  }\n"
+   "  return vl;\n"
+   "}\n"))
+
 (def lit-spec
   {:version "330 core"
-   :prelude ""
+   :prelude lit-prelude
    :uniforms
-   {:u_mvp        :mat4
-    :u_model      :mat4
-     :u_tex          :sampler2D
-     :u_num_textures [:float 31.0]
-    :u_ambient    [:vec3 [0.18 0.18 0.22]]
-    :u_light_pos  [:vec3 [0.0 3.0 0.0]]
-    :u_light_col  [:vec3 [1.0 0.85 0.6]]
-    :u_light_dist [:float 8.0]}
+   {:u_mvp          :mat4
+    :u_model        :mat4
+    :u_tex          :sampler2D
+    :u_num_textures [:float 31.0]
+    :u_ambient      [:vec3 [0.14 0.14 0.18]]}
    :attribs
    {:a_pos       [:vec3 0]
     :a_uv        [:vec2 1]
@@ -51,16 +66,11 @@
     [:set :v_tex_index :a_tex_index]
     [:set :gl_Position [:* :u_mvp [:vec4 :a_pos 1.0]]]]
    :fs-main
-   [[:let :tex      :vec4 [:texture :u_tex
-                           [:vec2 [:. :v_uv :x]
-                                  [:/ [:+ :v_tex_index [:fract [:. :v_uv :y]]]
-                                   :u_num_textures]]]]
-    [:let :to_light :vec3 [:- :u_light_pos :v_world_pos]]
-    [:let :dist     :float [:length :to_light]]
-    [:let :dir      :vec3 [:/ :to_light [:max :dist 0.0001]]]
-    [:let :ndotl    :float [:max [:dot :v_normal :dir] 0.0]]
-    [:let :r2       :float [:* :u_light_dist :u_light_dist]]
-    [:let :atten    :float [:/ 1.0 [:+ 1.0 [:/ [:* :dist :dist] :r2]]]]
-    [:let :lit      :vec3 [:* :u_light_col [:* :ndotl :atten]]]
+   [[:let :tex :vec4 [:texture :u_tex
+                      [:vec2 [:. :v_uv :x]
+                             [:/ [:+ :v_tex_index [:fract [:. :v_uv :y]]]
+                              :u_num_textures]]]]
+    ;; accumulate every dynamic point light (q1k3 fragment light loop)
+    [:let :lit :vec3 [:accum_light :v_world_pos [:normalize :v_normal]]]
     [:set :frag_color [:vec4 [:* [:. :tex :rgb] [:+ :u_ambient :lit]]
                        [:. :tex :a]]]]})

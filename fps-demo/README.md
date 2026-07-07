@@ -7,8 +7,16 @@ written in **jolt** (native Clojure — no JVM).
 
 This is the Phase 2 vertical slice: free-look camera + full q1k3 player
 physics (accel/friction, gravity, jumping) and voxel collision against the
-actual level geometry, rendered with a textured, lit shader. Combat (enemies,
-shotgun, hitscan, health) is in progress.
+actual level geometry, rendered with a textured, lit shader. Combat is
+projectile-based, matching q1k3: the shotgun throws eight shell pellets, and
+each enemy type fires its own projectile (grunt shells, enforcer plasma, ogre
+grenades, zombie gibs) while hounds lunge for melee contact. Projectiles carry
+gravity/friction/bounce and collide against the level and entity AABBs;
+grenades explode with radial falloff. Enemies walk, collide, stair-step and turn
+off ledges, and the world is lit by q1k3's dynamic point-light array (player
+lamp, muzzle flash, projectile glow, explosion flashes). Still open (tracked as
+beads issues): torches and other world objects, distinct per-type enemy meshes,
+more weapons/pickups, the second level, and audio.
 
 ## Run
 
@@ -35,6 +43,11 @@ You spawn at the level's `info_player_start`, with collision against the
 - `FPS_DEMO_HOLD` — pre-seed a held movement key for the smoke test so the
   input→accel→physics→position chain runs without a person at the keyboard
   (`W`, `A`, `S`, or `D`).
+- `FPS_DEMO_SHOT` — path to dump one settled frame as raw RGBA (bottom-row
+  first, `glReadPixels`), for headless visual verification. Convert to PNG with
+  a tiny script (any raw-RGBA → PNG encoder; the drawable size is printed to
+  stderr as `SHOT <w> <h> <path>`). `FPS_DEMO_SHOT_AT` sets the game-time
+  (seconds) at which the frame is captured (default `1.5`).
 
 ## Headless sanity check
 
@@ -60,9 +73,19 @@ joltc -M:check
   drag-to-look angle update.
 - `fps-demo.map` — decodes the q1k3 level container into blocks and builds the
   `128³` solid-cell voxel set used for collision.
+- `fps-demo.entity` — the enemy AI FSM (idle/patrol/follow/attack/evade) and the
+  per-tick folds `step-enemies` (collecting who fired) and `step-melee` (hound
+  contact).
+- `fps-demo.projectile` — the projectile simulation (shell/nail/plasma/grenade/
+  gib): q1k3 physics, wall/entity collision, grenade bounce + area explosion,
+  and the `player-shotgun` / `enemy-attack` spawn helpers. GL-free and tested in
+  `check.clj`.
 - `fps-demo.maps.l` — the Slipgate Complex (`m1`) level bytes.
 - `fps-demo.textured` — interleaved pos/uv/normal box geometry.
-- `fps-demo.shaders` — the lit/textured shader spec as plain data.
+- `fps-demo.shaders` — the lit/textured shader spec as plain data (the lit
+  shader's prelude carries q1k3's dynamic point-light accumulation loop).
+- `fps-demo.light` — the dynamic point-light buffer: distance fade + packing of
+  up to 16 lights into the array the shader samples. GL-free and tested.
 - `fps-demo.model` — the `.rmf` model parser (vertices, normals, UVs, frames),
   feeding Phase 3 combat meshes.
 

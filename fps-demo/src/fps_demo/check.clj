@@ -13,7 +13,8 @@
             [fps-demo.model     :as model]
             [fps-demo.models.unit :as unit]
               [fps-demo.entity    :as ent]
-              [fps-demo.weapon    :as wpn]
+              [fps-demo.projectile :as proj]
+              [fps-demo.light     :as light]
               [fps-demo.particle  :as part]
               [fps-demo.pickup    :as pkup]
               [fps-demo.hud       :as hud]
@@ -63,8 +64,8 @@
   (let [{:keys [vs-src fs-src]} (shader/sources sh/lit-spec)]
     (assert (str/includes? fs-src "sampler2D") "lit shader samples a 2D texture")
     (assert (str/includes? fs-src "u_num_textures") "lit shader knows the atlas texture count")
-    (assert (str/includes? fs-src "u_light_pos") "lit shader has a point light position")
-    (assert (str/includes? fs-src "u_light_col") "lit shader has a point light colour")
+    (assert (str/includes? fs-src "u_lights") "lit shader has the dynamic light array")
+    (assert (str/includes? fs-src "accum_light") "lit shader accumulates the light loop")
     (assert (str/includes? vs-src "a_uv") "vertex shader reads a_uv attribute")
     (assert (str/includes? vs-src "a_tex_index") "vertex shader reads the tex-array layer")
     (assert (str/includes? vs-src "v_uv") "vertex shader writes the v_uv varying")
@@ -824,30 +825,78 @@
               "off-path wall does not block")))
   (println "enemy view: dist/angle/can-see over cells + player ok")
 
-  ;; --- step-enemies: the per-tick fold (enemies x cells x player -> [new dmg]) -
-  ;; Pure fold: each enemy gets a view, is stepped, and if it fires this tick its
-  ;; shot damage accumulates. Returns [new-enemies total-damage-this-tick].
-  ;; --- step-enemies: the per-tick fold (enemies x cells x player -> [new dmg]) -
-  ;; Pure fold: each enemy gets a view, is stepped, and if it fires this tick its
-  ;; shot damage accumulates. Returns [new-enemies total-damage-this-tick]. We
-  ;; trigger a REAL fire by putting a grunt in :attack-prepare past its deadline:
-  ;; stepping auto-advances to :attack-exec, which sets :fire-now (see entity FSM
-  ;; test above). The fold must turn that :fire-now into enemy-shot-damage.
+  ;; --- step-enemies: the per-tick fold (enemies x cells x player -> [new fired]) -
+  ;; Pure fold: each enemy gets a view and is stepped; the ones that entered
+  ;; :attack-exec this tick (their :fire-now is set) are collected into `fired`
+  ;; so the caller can spawn their projectiles (q1k3 _attack). Returns
+  ;; [new-enemies fired]. We trigger a REAL fire by putting a grunt in
+  ;; :attack-prepare past its deadline: stepping auto-advances to :attack-exec,
+  ;; which sets :fire-now (see entity FSM test above). new-enemies have the
+  ;; transient :fire-now stripped; the entries in `fired` retain it.
   (let [cells #{}
-        view  {:dist 50.0 :angle 0.0 :can-see true}
         ;; grunt close to player, locked into attack-prepare (update-at ~0.4).
         prep  (-> (ent/make-grunt [50.0 0.0 0.0] 0.0 0)
                   (ent/set-state :attack-prepare 0.0 (fn [] 0.0)))]
     ;; step at t=0.6 (> update-at) -> attack-prepare advances to attack-exec -> fire.
-    (let [[enemies dmg] (ent/step-enemies cells [0.0 0.0 0.0] [prep] 0.6 0.016 (fn [] 0.0))]
-      (assert (approx= dmg ent/enemy-shot-damage) "firing grunt deals one shot via the fold")
+    (let [[enemies fired] (ent/step-enemies cells [0.0 0.0 0.0] [prep] 0.6 0.016 (fn [] 0.0))]
+      (assert (= 1 (count fired)) "firing grunt is collected in `fired`")
+      (assert (:fire-now (first fired)) "the fired enemy retains :fire-now for spawning")
       (assert (= (:state (first enemies)) :attack-exec) "folded enemy is now in attack-exec")
       (assert (not (:fire-now (first enemies))) "fold strips the transient :fire-now"))
-    ;; an idle grunt (no LOS trigger) deals no damage this tick.
+    ;; an idle grunt (no LOS trigger) fires nothing this tick.
     (let [idle (ent/make-grunt [800.0 0.0 0.0] 0.0 0)   ; beyond wake distance
-          [_ dmg2] (ent/step-enemies cells [0.0 0.0 0.0] [idle] 0.6 0.016 (fn [] 0.0))]
-      (assert (approx= dmg2 0.0) "idle grunt beyond wake range deals no damage")))
-  (println "enemy fold: step-enemies fire-accumulation ok")
+          [_ fired2] (ent/step-enemies cells [0.0 0.0 0.0] [idle] 0.6 0.016 (fn [] 0.0))]
+      (assert (zero? (count fired2)) "idle grunt beyond wake range fires nothing")))
+  (println "enemy fold: step-enemies fire-collection ok")
+
+  ;; --- step-melee: hound lunge contact folded over the enemy list -------------
+  ;; A lunging hound overlapping the player deals its melee damage once; a distant
+  ;; hound and a ranged grunt contribute nothing.
+  (let [hound (-> (ent/make-enemy-of-type :hound [0.0 0.0 0.0] 0.0 0)
+                  (ent/set-state :attack-exec 0.0 (fn [] 0.0)))
+        grunt (ent/set-state (ent/make-grunt [0.0 0.0 0.0] 0.0 0) :attack-exec 0.0 (fn [] 0.0))
+        [es dmg] (ent/step-melee [hound grunt] [0.0 0.0 0.0] [12.0 24.0 12.0])]
+    (assert (approx= dmg 14.0) "step-melee sums the hound's 14 contact damage")
+    (assert (:did-hit (first es)) "the hound is marked did-hit after contact")
+    (let [[_ dmg-far] (ent/step-melee [hound] [900.0 0.0 0.0] [12.0 24.0 12.0])]
+      (assert (approx= dmg-far 0.0) "a distant lunging hound deals no melee damage")))
+  (println "enemy fold: step-melee hound contact ok")
+
+  ;; --- enemy locomotion: the 6-arg step-enemy integrates position ------------
+  ;; q1k3 entity_enemy._update sets velocity along the facing then runs
+  ;; _update_physics (position + gravity + wall/ledge collision + stair-step).
+  ;; The port routes this through player/step-physics. Verify: a grounded
+  ;; follower walks along its target-yaw, gravity makes a floating enemy fall,
+  ;; and a wall/ledge stop turns the enemy (_did_collide).
+  (let [floor (into #{} (for [x (range 0 4) z (range 0 6)] (lvl/cell-key x 0 z))) ; top at y=16
+        ;; follower facing +Z on the floor: center rests at 16+half.y(28)=44.
+        f0 (-> (ent/make-grunt [48.0 44.0 48.0] 0.0 0)
+               (ent/set-state :follow 0.0 (fn [] 0.0))
+               (assoc :target-yaw 0.0 :on-ground true))
+        r  (ent/step-enemy f0 {:dist 100.0 :angle 0.0 :can-see false}
+                           0.0 0.016666667 (fn [] 0.0) floor)]
+    (assert (> (nth (:pos r) 2) 48.0) "grounded follower walks forward (+Z)")
+    (assert (:on-ground r) "follower stays on the ground while walking"))
+  ;; gravity: a floating idle enemy with no floor beneath falls this tick.
+  (let [e0 (-> (ent/make-grunt [500.0 500.0 500.0] 0.0 0)
+               (assoc :on-ground false :vel [0.0 0.0 0.0]))
+        r  (ent/step-enemy e0 {:dist 999.0 :angle 0.0 :can-see false}
+                           0.0 0.016666667 (fn [] 0.0) #{})]
+    (assert (< (nth (:pos r) 1) 500.0) "a floating enemy falls under gravity"))
+  ;; wall turn: a follower walking +Z into a tall wall stops and turns by its
+  ;; turn-bias (_did_collide, non-patrol). Floor spans z-cells 0..1; wall fills
+  ;; z-cell 2 (world z[64,96)) over the enemy's height, so the +Z move is blocked.
+  (let [floor (into #{} (concat
+                          (for [x (range 0 3) z (range 0 2)] (lvl/cell-key x 0 z))
+                          (for [y (range 1 5)] (lvl/cell-key 1 y 2))))   ; tall wall at z-cell 2
+        w0 (-> (ent/make-grunt [48.0 44.0 50.0] 0.0 0)
+               (ent/set-state :follow 0.0 (fn [] 0.0))
+               (assoc :target-yaw 0.0 :on-ground true :turn-bias 0.5))
+        r  (ent/step-enemy w0 {:dist 100.0 :angle 0.0 :can-see false}
+                           0.0 0.016666667 (fn [] 0.0) floor)]
+    (assert (> (Math/abs (:target-yaw r)) 0.0) "hitting a wall turns the enemy (target-yaw changes)")
+    (assert (< (+ (nth (:pos r) 2) 12.0) 64.0) "enemy never penetrates the wall (front < 64)"))
+  (println "enemy locomotion: walk / gravity / wall-turn ok")
 
   ;; --- fp-view handedness: world +X must render screen-RIGHT and forward +Z
   ;; must go INTO the screen, matching q1k3's left-handed projection
@@ -927,43 +976,158 @@
     (println (str "[cam] turn   yaw-0.5 cam-x=" (double turn-neg)
                   " (should mirror: " (if (pos? turn-neg) "ok" "BAD") ")")))
 
-  ;; --- weapon: hitscan + shotgun damage (Issue #53) ---------------------------
-  ;; ray-aabb (slab): unit +Z ray vs a box centered 200 ahead, half [12 28 12].
-  (assert (approx= 188.0 (wpn/ray-aabb [0.0 0.0 0.0] [0.0 0.0 1.0]
-                                        [0.0 0.0 200.0] [12.0 28.0 12.0]))
-          "ray-aabb: +Z ray enters box at z=200-12=188")
-  (assert (nil? (wpn/ray-aabb [0.0 0.0 0.0] [0.0 0.0 1.0]
-                              [100.0 0.0 200.0] [12.0 28.0 12.0]))
-          "ray-aabb: X-offset ray misses")
-  (assert (nil? (wpn/ray-aabb [0.0 0.0 0.0] [0.0 0.0 -1.0]
-                              [0.0 0.0 200.0] [12.0 28.0 12.0]))
-          "ray-aabb: box behind the ray -> miss")
-  ;; hitscan: clear corridor, grunt dead-ahead -> :enemy idx 0 at the near face.
-  (let [g (ent/make-grunt [0.0 0.0 200.0] 0.0 0)
-        h (wpn/hitscan #{} [0.0 0.0 0.0] [0.0 0.0 1.0] [g])]
-    (assert (= :enemy (:kind h)) "hitscan: grunt in line -> :enemy")
-    (assert (zero? (:idx h))     "hitscan: hit idx 0")
-    (assert (approx= 188.0 (:dist h)) "hitscan: enemy dist = near face 188"))
-  ;; hitscan: grunt off-axis, no geometry -> miss (nil).
-  (let [g (ent/make-grunt [200.0 0.0 200.0] 0.0 0)]
-    (assert (nil? (wpn/hitscan #{} [0.0 0.0 0.0] [0.0 0.0 1.0] [g]))
-            "hitscan: off-axis grunt + no wall -> miss"))
-  ;; hitscan: a wall cell on the z-axis (cz=3 ~ world z=96) occludes the grunt.
-  (let [g (ent/make-grunt [0.0 0.0 200.0] 0.0 0)
-        h (wpn/hitscan #{(lvl/cell-key 0 0 3)} [0.0 0.0 0.0] [0.0 0.0 1.0] [g])]
-    (assert (= :wall (:kind h)) "hitscan: wall cell occludes grunt")
-    (assert (approx= 96.0 (:dist h)) "hitscan: wall hit at z=96"))
-  ;; fire-shot: a 40hp grunt dies in two shells (24,24 -> 16, then -8); dead culled.
-  (let [g0  (ent/make-grunt [0.0 0.0 200.0] 0.0 0)
-        dir [0.0 0.0 1.0]
-        rng (fn [] 0.0)]
-    (let [[v1 _] (wpn/fire-shot #{} [0.0 0.0 0.0] dir [g0] 0.0 rng)
-          h1    (:health (nth v1 0))]
-      (assert (approx= 16.0 h1) (str "fire-shot #1: 40-24=16, got " h1)))
-    (let [[v2 _] (wpn/fire-shot #{} [0.0 0.0 0.0] dir
-                                [(assoc g0 :health 16.0)] 0.0 rng)]
-      (assert (zero? (count v2)) "fire-shot #2: lethal -> dead grunt culled")))
-  (println "weapon: ray-aabb / hitscan / fire-shot ok")
+  ;; --- projectiles: per-kind stats (entity_projectile_*.js _init) -------------
+  ;; Every attack in q1k3 is a physical projectile. Check the per-kind stats:
+  ;; shell (4 dmg, no gravity, 0.1s), nail (9, no gravity, 3s), plasma (15),
+  ;; grenade (bouncy, area 120 over 196u, 2s fuse), gib (10, gravity).
+  (let [sh (proj/shell   :player [0.0 0.0 0.0] [0.0 0.0 100.0] 0.0)
+        na (proj/nail     :player [0.0 0.0 0.0] [0.0 0.0 100.0] 0.0)
+        pl (proj/plasma   :enemy  [0.0 0.0 0.0] [0.0 0.0 100.0] 0.0)
+        gr (proj/grenade  :player [0.0 0.0 0.0] [0.0 0.0 100.0] 0.0)
+        gi (proj/gib      :enemy  [0.0 0.0 0.0] [0.0 0.0 100.0] 0.0)]
+    (assert (approx= (:direct sh) 4.0)  "shell 4 dmg")
+    (assert (approx= (:die-at sh) 0.1)  "shell 0.1s life")
+    (assert (approx= (:gravity sh) 0.0) "shell no gravity")
+    (assert (approx= (:direct na) 9.0)  "nail 9 dmg")
+    (assert (approx= (:die-at na) 3.0)  "nail 3s life")
+    (assert (approx= (:direct pl) 15.0) "plasma 15 dmg")
+    (assert (approx= (:gravity gr) 1.0) "grenade has gravity")
+    (assert (approx= (:bounciness gr) 0.5) "grenade bounces (0.5)")
+    (assert (approx= (:area gr) 120.0) "grenade area 120")
+    (assert (approx= (:radius gr) 196.0) "grenade radius 196")
+    (assert (approx= (:die-at gr) 2.0) "grenade 2s fuse")
+    (assert (approx= (:direct gi) 10.0) "gib 10 dmg")
+    (assert (approx= (:gravity gi) 1.0) "gib has gravity")
+    ;; ogre grenade carries the reduced 40 damage
+    (let [og (proj/grenade :enemy [0.0 0.0 0.0] [0.0 0.0 1.0] 0.0 40.0)]
+      (assert (approx= (:area og) 40.0) "ogre grenade area 40")))
+  (println "projectile: per-kind stats ok")
+
+  ;; --- projectile flight + collision (entity_t._update_physics) ---------------
+  ;; No walls, no targets: a no-gravity nail advances by vel*tick and survives.
+  (let [na (proj/nail :player [0.0 8.0 8.0] [1000.0 0.0 0.0] 0.0)
+        {p :proj} (proj/step-projectile #{} na [] 0.0 0.016666667)]
+    (assert (some? p) "nail in the open survives a tick")
+    (assert (approx= (nth (:pos p) 0) (* 1000.0 0.016666667)) "nail advances by vel*tick")
+    (assert (approx= (nth (:vel p) 0) 1000.0) "no gravity/friction: vel.x unchanged"))
+  ;; Gravity pulls a gib's vertical velocity down over a tick.
+  (let [gi (proj/gib :enemy [0.0 100.0 0.0] [0.0 0.0 0.0] 0.0)
+        {p :proj} (proj/step-projectile #{} gi [] 0.0 0.016666667)]
+    (assert (neg? (nth (:vel p) 1)) "gib gravity makes vel.y negative"))
+  ;; Wall contact kills a non-bouncer and sprays impact fx (no direct hit).
+  (let [na (proj/nail :player [40.0 8.0 8.0] [3000.0 0.0 0.0] 0.0)
+        cells #{(lvl/cell-key 2 0 0)}                    ; solid world x[64,96)
+        {p :proj es :events} (proj/step-projectile cells na [] 0.0 0.016666667)]
+    (assert (nil? p) "nail dies on wall contact")
+    (assert (some #(= :fx (:t %)) es) "wall impact spawns fx particles")
+    (assert (not-any? #(= :hit (:t %)) es) "wall hit deals no entity damage"))
+  ;; A grenade bounces off a wall (reflected vel, still alive).
+  (let [gr (proj/grenade :player [40.0 8.0 8.0] [3000.0 0.0 0.0] 0.0)
+        cells #{(lvl/cell-key 2 0 0)}
+        {p :proj} (proj/step-projectile cells gr [] 0.0 0.016666667)]
+    (assert (some? p) "grenade survives the wall (bounces)")
+    (assert (neg? (nth (:vel p) 0)) "grenade x velocity reflects on bounce"))
+  ;; Direct entity hit: a nail reaching an enemy deals its :direct and dies.
+  (let [na  (proj/nail :player [0.0 8.0 8.0] [3000.0 0.0 0.0] 0.0)
+        en  [{:pos [40.0 8.0 8.0] :half [12.0 28.0 12.0] :dead? false}]
+        {p :proj es :events} (proj/step-projectile #{} na en 0.0 0.016666667)]
+    (assert (nil? p) "nail dies on entity contact")
+    (let [hit (first (filter #(= :hit (:t %)) es))]
+      (assert (some? hit) "entity contact emits a :hit event")
+      (assert (= :player (:team hit)) "player-team projectile hits an enemy")
+      (assert (zero? (:idx hit)) "hit indexes the struck enemy")
+      (assert (approx= (:amount hit) 9.0) "nail direct damage is 9")))
+  ;; Expiry: a nail past its fuse vanishes silently; a grenade explodes.
+  (let [na (proj/nail :player [0.0 0.0 0.0] [0.0 0.0 0.0] 0.0)
+        {p :proj es :events} (proj/step-projectile #{} (assoc na :die-at 0.05) [] 0.1 0.016)]
+    (assert (nil? p) "expired nail is gone")
+    (assert (empty? es) "expired nail emits nothing"))
+  (let [gr (proj/grenade :player [0.0 0.0 0.0] [0.0 0.0 0.0] 0.0)
+        {p :proj es :events} (proj/step-projectile #{} (assoc gr :die-at 0.05) [] 0.1 0.016)]
+    (assert (nil? p) "expired grenade is gone")
+    (assert (some #(= :explode (:t %)) es) "grenade fuse -> explosion event"))
+  (println "projectile: flight / wall-death / bounce / hit / expiry ok")
+
+  ;; --- splash-damage falloff (scale(dist,0,r,amount,0)) -----------------------
+  (assert (approx= (proj/splash-damage 0.0 196.0 120.0) 120.0) "center takes full splash")
+  (assert (approx= (proj/splash-damage 98.0 196.0 120.0) 60.0) "half radius -> half damage")
+  (assert (approx= (proj/splash-damage 196.0 196.0 120.0) 0.0) "rim -> 0")
+  (assert (approx= (proj/splash-damage 300.0 196.0 120.0) 0.0) "beyond rim -> 0")
+  (println "projectile: splash-damage falloff ok")
+
+  ;; --- attack spawn helpers (weapons.js + entity_enemy_*._attack) -------------
+  ;; Player shotgun: 8 shells, all :player team; with rng 0.5 the +/-0.04 spread
+  ;; is exactly 0, so every pellet flies straight down the look (+Z here).
+  (let [shells (proj/player-shotgun [0.0 0.0 0.0] 0.0 0.0 0.0 (fn [] 0.5))]
+    (assert (= 8 (count shells)) "shotgun throws 8 shells")
+    (assert (every? #(= :shell (:kind %)) shells) "all pellets are shells")
+    (assert (every? #(= :player (:team %)) shells) "all pellets are player-team")
+    (assert (pos? (nth (:vel (first shells)) 2)) "pellets fly forward (+Z look)"))
+  ;; Enemy attacks by type: grunt 3 shells, enforcer 1 plasma, ogre 1 grenade (40
+  ;; area), zombie 1 gib, hound none (melee). All :enemy team, aimed at the player.
+  (let [player-pos [0.0 0.0 100.0]
+        atk (fn [type] (proj/enemy-attack (ent/make-enemy-of-type type [0.0 0.0 0.0] 0.0 0)
+                                          player-pos 0.0 (fn [] 0.5)))]
+    (let [g (atk :grunt)]
+      (assert (= 3 (count g)) "grunt fires 3 shells")
+      (assert (every? #(and (= :shell (:kind %)) (= :enemy (:team %))) g) "grunt shells are enemy-team")
+      (assert (pos? (nth (:vel (first g)) 2)) "grunt shells aim toward the +Z player"))
+    (let [e (atk :enforcer)]
+      (assert (= 1 (count e)) "enforcer fires 1 plasma")
+      (assert (= :plasma (:kind (first e))) "enforcer projectile is plasma"))
+    (let [o (atk :ogre)]
+      (assert (= 1 (count o)) "ogre fires 1 grenade")
+      (assert (= :grenade (:kind (first o))) "ogre projectile is a grenade")
+      (assert (approx= (:area (first o)) 40.0) "ogre grenade area 40"))
+    (let [z (atk :zombie)]
+      (assert (= 1 (count z)) "zombie fires 1 gib")
+      (assert (= :gib (:kind (first z))) "zombie projectile is a gib"))
+    (assert (empty? (atk :hound)) "hound is melee: fires no projectile"))
+  (println "projectile: player-shotgun + enemy-attack spawns ok")
+
+  ;; --- step-projectiles fold + routing ----------------------------------------
+  ;; A player shell reaches an enemy (enemy-hit); an enemy shell reaches the
+  ;; player (player-hit). Verify both route to the correct team in one fold.
+  (let [enemies [{:pos [40.0 8.0 8.0] :half [12.0 28.0 12.0] :dead? false}]
+        player  {:pos [0.0 8.0 8.0] :half [12.0 24.0 12.0]}
+        pshell  (proj/shell :player [0.0 8.0 8.0] [3000.0 0.0 0.0] 0.0)   ; -> enemy at +X
+        eshell  (proj/shell :enemy  [40.0 8.0 8.0] [-3000.0 0.0 0.0] 0.0) ; -> player at origin
+        [remain events] (proj/step-projectiles #{} [pshell eshell] enemies player 0.0 0.016666667)]
+    (assert (some #(and (= :hit (:t %)) (= :player (:team %))) events)
+            "player shell -> enemy-hit event")
+    (assert (some #(and (= :hit (:t %)) (= :enemy (:team %))) events)
+            "enemy shell -> player-hit event")
+    (assert (zero? (count remain)) "both shells died on contact"))
+  (println "projectile: step-projectiles fold routes hits by team ok")
+
+  ;; --- dynamic light array (q1k3 r_push_light + fragment loop) ----------------
+  ;; fade: full (×10) within 768u, linear to 0 at 1024u, clamped beyond.
+  (assert (approx= (light/fade 768.0 1.0) 10.0) "light full within 768u")
+  (assert (approx= (light/fade 1024.0 1.0) 0.0) "light gone at 1024u")
+  (assert (approx= (light/fade 896.0 1.0) 5.0)  "light half-faded at 896u")
+  (assert (approx= (light/fade 2000.0 1.0) 0.0) "light clamped to 0 past far range")
+  (assert (approx= (light/fade 100.0 2.0) 20.0) "intensity scales the fade")
+  ;; pack-lights: colour pre-multiplied by fade, packed two vec3 per light.
+  (let [cam  [0.0 0.0 100.0]
+        arr  (light/pack-lights [{:pos [0.0 0.0 0.0] :intensity 1.0 :color [255.0 128.0 64.0]}] cam)]
+    (assert (= (alength arr) (* light/max-lights 6)) "packed array is max-lights * 6 floats")
+    (assert (approx= (aget arr 0) 0.0) "light pos.x packed")
+    (assert (approx= (aget arr 2) 0.0) "light pos.z packed")
+    ;; dist 100 < 768 -> fade 10; colour *= 10
+    (assert (approx= (aget arr 3) 2550.0) "colour.r pre-multiplied by fade (255*10)")
+    (assert (approx= (aget arr 4) 1280.0) "colour.g pre-multiplied by fade (128*10)")
+    (assert (approx= (aget arr 5) 640.0)  "colour.b pre-multiplied by fade (64*10)"))
+  ;; a light beyond the far range contributes nothing (slot stays zero).
+  (let [arr (light/pack-lights [{:pos [0.0 0.0 5000.0] :intensity 1.0 :color [255.0 255.0 255.0]}]
+                               [0.0 0.0 0.0])]
+    (assert (approx= (aget arr 3) 0.0) "far light packs no colour"))
+  ;; more than max-lights are capped (only the first max-lights land).
+  (let [many (repeat (* 3 light/max-lights)
+                     {:pos [0.0 0.0 0.0] :intensity 1.0 :color [10.0 10.0 10.0]})
+        arr  (light/pack-lights many [0.0 0.0 0.0])]
+    (assert (= (alength arr) (* light/max-lights 6)) "array stays max-lights wide with overflow")
+    (assert (approx= (aget arr (- (* light/max-lights 6) 3)) 100.0) "last slot filled (10*10)"))
+  (println "light: fade / pack / far-cull / overflow-cap ok")
 
   ;; --- respawn: a dead player resets to spawn at full health (q1k3 game_init) -
   ;; player/_kill sets dead; game_init(map_index) after 2s re-spawns the player.

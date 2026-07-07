@@ -84,6 +84,46 @@
                            (recur (inc i) (+ k 6)))))]
             (recur (rest ps) nb))))))
 
+;; --- in-flight projectiles (world space) ------------------------------------
+;; q1k3 draws each projectile with its own model + texture; the flat pipeline
+;; has no textures, so nail/plasma/grenade/gib render as small colored cubes and
+;; shells (invisible & near-instant in the original) are skipped. Same aset-into-
+;; a-float-array approach as particle-box-verts since the count changes per frame.
+
+(def ^:const projectile-half 3.0)   ; default cube half-size in world units
+
+(def ^:private projectile-look
+  ;; per-kind [half-size [r g b]]. Shells are omitted (rendered nothing).
+  {:nail    [2.0 [0.80 0.85 1.00]]
+   :plasma  [3.0 [1.00 0.55 0.10]]
+   :grenade [4.0 [0.20 0.50 0.15]]
+   :gib     [3.5 [0.55 0.12 0.10]]})
+
+(defn projectile-box-verts
+  "One colored cube per visible projectile at its :pos. Skips :shell (invisible).
+  36 verts × 6 floats per drawn projectile; returns a flat float-array."
+  [projectiles]
+  (let [drawn (filterv #(projectile-look (:kind %)) projectiles)
+        out   (float-array (* (count drawn) 216))]
+    (loop [ps drawn base 0]
+      (if (empty? ps) out
+          (let [pr  (first ps)
+                pos (:pos pr)
+                [s [r g b]] (projectile-look (:kind pr))
+                s   (double s)
+                px (double (nth pos 0)) py (double (nth pos 1)) pz (double (nth pos 2))
+                nb (loop [i 0 k base]
+                     (if (>= i 36) k
+                         (let [c (nth cube-corners (nth part-corner-idx i))]
+                           (aset out k       (+ px (* (double (c 0)) s)))
+                           (aset out (inc k) (+ py (* (double (c 1)) s)))
+                           (aset out (+ k 2) (+ pz (* (double (c 2)) s)))
+                           (aset out (+ k 3) (double r))
+                           (aset out (+ k 4) (double g))
+                           (aset out (+ k 5) (double b))
+                           (recur (inc i) (+ k 6)))))]
+            (recur (rest ps) nb))))))
+
 (defn viewmodel-verts
   "Procedural shotgun viewmodel in screen pixels (ortho), bottom-right. A few
   stacked quads suggest a barrel + pump + stock; when `flash?` is true an extra
