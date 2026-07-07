@@ -43,9 +43,7 @@
       {:data data :count count}
       (let [b (first in)
             {:keys [min size]} (lvl/world-box b)
-            [sx sy sz] size
-            tile (max 1.0 (/ (max sx (max sy sz)) 32.0))
-            box (tex/box min size tile (or (:tex b) 0))]
+            box (tex/box min size (or (:tex b) 0))]
         (recur (rest in) (into data (:data box)) (+ count (:count box)))))))
 
 (defn- render-player-spawn []

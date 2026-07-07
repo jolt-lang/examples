@@ -122,9 +122,8 @@
 (defn- level-geometry
   "Build one interleaved vertex buffer for every block. Returns
   {:data [...floats] :count N :stride 9}. Each block's :tex (the q1k3 texture
-  sentinel) is baked into every vertex as the a_tex_index layer. `tile` per block
-  scales the texture roughly once per 32-unit cell so large walls don't smear a
-  single tile."
+  sentinel) is baked into every vertex as the a_tex_index layer; tex/box tiles
+  each face by its own world size so textures keep a uniform density."
   []
   (let [blocks (first-map-blocks)]
     (loop [in blocks data [] count 0]
@@ -132,9 +131,7 @@
         {:data data :count count :stride 9}
         (let [b   (first in)
               {:keys [min size]} (lvl/world-box b)
-              [sx sy sz] size
-              tile (max 1.0 (/ (max sx (max sy sz)) 32.0))
-              box  (tex/box min size tile (:tex b))]
+              box  (tex/box min size (:tex b))]
           (recur (rest in)
                  (into data (:data box))
                  (+ count (:count box))))))))
@@ -209,7 +206,8 @@
                    :tex        (u "u_tex")
                    :num-tex    (u "u_num_textures")
                    :lights     (u "u_lights")
-                   :num-lights (u "u_num_lights")}}))))))
+                   :num-lights (u "u_num_lights")
+                   :forced-tex (u "u_forced_tex")}}))))))
 
 (defn- upload-mat4
   "Write a 4×4 matrix to a uniform location as column-major (transpose=FALSE)."
@@ -320,6 +318,7 @@
     (gl/gl-bind-texture gl/GL-TEXTURE-2D (:tex state))
     (gl/gl-uniform-1i (:tex locs) 0)
     (gl/gl-uniform-1f (:num-tex locs) (double (:num-tex state)))
+    (gl/gl-uniform-1f (:forced-tex locs) -1.0)   ; level uses per-vertex a_tex_index
     ;; upload the dynamic point-light array (two vec3 per light) + the active
     ;; count, so the fragment loop only iterates lights that actually contribute
     (let [[arr n] (light/pack-lights (frame-lights cam (or hud {})) (:eye cam))
@@ -338,25 +337,28 @@
         (when (pos? (count pv))
           (draw-flat! state (mat/mul proj view) pv))))
     ;; --- overlays (flat shader) -----------------------------------------------
-    ;; HUD bar + viewmodel are screen-space (ortho); blood particles reuse the
-    ;; world proj*view so they sit in the level. depth-test off so overlays paint
-    ;; over the world, then back on for the next frame.
+    ;; Quake-style HUD (status bar + numeric health + ∞ ammo), the viewmodel and
+    ;; crosshair are screen-space (ortho); blood particles reuse the world
+    ;; proj*view so they sit in the level. depth-test off so overlays paint over
+    ;; the world, then back on for the next frame.
     (let [ortho (mat/ortho 0.0 (double w) 0.0 (double h) -1.0 1.0)
           world (mat/mul proj view)
-          hmap  (or hud {})]
+          hmap  (or hud {})
+          hp    (max 0 (int (or (:health hmap) 0)))
+          hcol  (if (<= hp 25) [0.90 0.22 0.16] [0.95 0.80 0.35])]  ; red when low
       (gl/gl-disable gl/GL-DEPTH-TEST)
       (gl/gl-disable gl/GL-CULL-FACE)     ; overlay quads (CCW, ortho) aren't cull-safe
-      (when-let [fill (:health hmap)]
-        (draw-flat! state ortho
-                    (ov/hud-bar-verts w h (hud/bar-fill (double fill)))))
       (when-let [parts (:particles hmap)]
         (when (pos? (count parts))
           (draw-flat-points! state world (ov/particle-point-verts parts))))
+      (draw-flat! state ortho (ov/status-bar-verts w h))
+      (draw-flat! state ortho (ov/number-verts hp 30.0 14.0 40.0 hcol))
+      ;; ammo readout (∞ for the infinite-ammo shotgun), on the right of the bar
+      (draw-flat! state ortho (ov/ammo-verts [(- (double w) 70.0) 34.0]))
       (draw-flat! state ortho
                   (ov/viewmodel-verts (hud/muzzle-active? (:time hmap)
                                                           (:fire-time hmap))))
-      ;; ammo readout (∞ for the infinite-ammo shotgun), above the health bar.
-      (draw-flat! state ortho (ov/ammo-verts [45.0 70.0]))
+      (draw-flat! state ortho (ov/crosshair-verts w h))
       (gl/gl-enable gl/GL-DEPTH-TEST))))
 
 ;; --- enemy model matrix (pure, #52[C]) --------------------------------------
@@ -439,17 +441,25 @@
           vao    (:vao em)
           vbo    (:vbo em)
           model  (:model em)
-          nverts (:count em)]
+          nverts (:count em)
+          ymin   (:y-min model)]     ; model's lowest vertex (feet), in model space
       (gl/gl-bind-vertex-array vao)
       (gl/gl-bind-buffer gl/GL-ARRAY-BUFFER vbo)
       (doseq [e enemies]
         (let [[fa fb mix] (model/enemy-frame-anim e)
-              ptr         (pose-ptr model fa fb mix)
-              emodel      (enemy-model-matrix e)
-              emvp        (mat/mul proj (mat/mul view emodel))]
+              ptr    (pose-ptr model fa fb mix)
+              ;; lift the model so its feet (ymin) sit on the collision box bottom
+              ;; (pos.y - half.y) instead of dangling through the floor
+              scale  (:scale e 1.0)
+              foot   (- (- (nth (:half e) 1)) (* scale ymin))
+              [px py pz] (:pos e)
+              emodel (enemy-model-matrix (assoc e :pos [px (+ py foot) pz]))
+              emvp   (mat/mul proj (mat/mul view emodel))]
+          (gl/gl-uniform-1f (:forced-tex locs) (double (:texture e 17)))
           (gl/gl-buffer-data gl/GL-ARRAY-BUFFER
                              (* nverts 32) ptr GL-DYNAMIC-DRAW)
           (upload-mat4 (:mvp locs) emvp)
           (upload-mat4 (:model locs) emodel)
           (gl/gl-draw-arrays gl/GL-TRIANGLES 0 nverts)))
+      (gl/gl-uniform-1f (:forced-tex locs) -1.0)
       (gl/gl-bind-vertex-array 0))))

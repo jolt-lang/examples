@@ -52,6 +52,7 @@
     :u_model        :mat4
     :u_tex          :sampler2D
     :u_num_textures [:float 31.0]
+    :u_forced_tex   [:float -1.0]         ; >=0 overrides a_tex_index (enemy meshes)
     :u_ambient      [:vec3 [0.14 0.14 0.18]]}
    :attribs
    {:a_pos       [:vec3 0]
@@ -71,9 +72,13 @@
     [:set :v_tex_index :a_tex_index]
     [:set :gl_Position [:* :u_mvp [:vec4 :a_pos 1.0]]]]
    :fs-main
-   [[:let :tex :vec4 [:texture :u_tex
+   ;; atlas layer: per-vertex a_tex_index for the world; u_forced_tex overrides it
+   ;; for enemy meshes (whose VBO carries no tex-index attribute)
+   [[:let :layer :float :v_tex_index]
+    [:if [:>= :u_forced_tex 0.0] [[:set :layer :u_forced_tex]]]
+    [:let :tex :vec4 [:texture :u_tex
                       [:vec2 [:. :v_uv :x]
-                             [:/ [:+ :v_tex_index [:fract [:. :v_uv :y]]]
+                             [:/ [:+ :layer [:fract [:. :v_uv :y]]]
                               :u_num_textures]]]]
     ;; accumulate every dynamic point light (q1k3 fragment light loop)
     [:let :lit :vec3 [:accum_light :v_world_pos [:normalize :v_normal]]]

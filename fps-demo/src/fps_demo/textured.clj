@@ -21,41 +21,54 @@
    6 [ox         (+ oy sy)  (+ oz sz)]
    7 [(+ ox sx)  (+ oy sy)  (+ oz sz)]})
 
-;; Each entry: [i0 i1 i2 i3 nx ny nz]. (i0,i1,i2,i3) wind CCW viewed from
-;; outside, so cross(v1-v0, v2-v0) == the declared normal (verified in check).
+;; World units spanned by one texture tile. q1k3 tiles each face by
+;; face-world-dim / texture-width; the atlas resamples every texture to 64, so a
+;; single constant gives uniform (square) texel density and, crucially, tiles U
+;; and V independently — using one `tile` for a whole box stretched the texture
+;; on non-cubic walls.
+(def ^:const texel-world 64.0)
+
+;; Each entry: [i0 i1 i2 i3 nx ny nz u-idx v-idx]. (i0..i3) wind CCW viewed from
+;; outside (cross(v1-v0, v2-v0) == the declared normal, verified in check). u-idx
+;; / v-idx select which of the box's [sx sy sz] world dimensions the face's U and
+;; V axes span (0=x 1=y 2=z), matching the p0->p1 (U) and p0->p3 (V) corner edges.
 (def ^:private faces
-  [[1 3 7 5  1.0  0.0  0.0]   ; +X
-   [0 4 6 2 -1.0  0.0  0.0]   ; -X
-   [2 6 7 3  0.0  1.0  0.0]   ; +Y
-   [0 1 5 4  0.0 -1.0  0.0]   ; -Y
-   [4 5 7 6  0.0  0.0  1.0]   ; +Z
-   [0 2 3 1  0.0  0.0 -1.0]]) ; -Z
+  [[1 3 7 5  1.0  0.0  0.0  1 2]   ; +X : U=Y V=Z
+   [0 4 6 2 -1.0  0.0  0.0  2 1]   ; -X : U=Z V=Y
+   [2 6 7 3  0.0  1.0  0.0  2 0]   ; +Y : U=Z V=X
+   [0 1 5 4  0.0 -1.0  0.0  0 2]   ; -Y : U=X V=Z
+   [4 5 7 6  0.0  0.0  1.0  0 1]   ; +Z : U=X V=Y
+   [0 2 3 1  0.0  0.0 -1.0  1 0]]) ; -Z : U=Y V=X
 
 (defn- quad
   "Two triangles (6 verts, 9 floats each) for one face: the 4 CCW corner indices,
-  the face normal, the texture tile count, and the texture-array layer index.
-  UVs run [0..tile] across the face."
-  [c i0 i1 i2 i3 nx ny nz tile tex-index]
+  the face normal, per-face U/V tile counts, and the texture-array layer. UVs run
+  [0..urep] x [0..vrep] across the face."
+  [c i0 i1 i2 i3 nx ny nz urep vrep tex-index]
   (let [p0 (c i0) p1 (c i1) p2 (c i2) p3 (c i3)
         emit (fn [[x y z] u v] [x y z u v nx ny nz tex-index])]
     (concat
      (emit p0 0.0   0.0)
-     (emit p1 tile  0.0)
-     (emit p2 tile  tile)
+     (emit p1 urep  0.0)
+     (emit p2 urep  vrep)
      (emit p0 0.0   0.0)
-     (emit p2 tile  tile)
-     (emit p3 0.0   tile))))
+     (emit p2 urep  vrep)
+     (emit p3 0.0   vrep))))
 
 (defn box
   "Textured axis-aligned box. Returns {:data [...floats] :count 36 :stride 9}.
   Six faces tessellated to 36 vertices; each vertex is
-  [x y z u v nx ny nz tex-index]. `tile` is how many times the texture repeats
-  across each face edge; `tex-index` selects the texture-array layer for every
-  face of this box."
-  [[ox oy oz] [sx sy sz] tile tex-index]
-  (let [c (corners ox oy oz sx sy sz)
+  [x y z u v nx ny nz tex-index]. Each face tiles the texture by its own world
+  dimensions / texel-world (uniform density, no stretch); `tex-index` selects the
+  atlas layer for every face."
+  [[ox oy oz] [sx sy sz] tex-index]
+  (let [c    (corners ox oy oz sx sy sz)
+        size [sx sy sz]
         data (->> faces
-                  (mapcat (fn [[i0 i1 i2 i3 nx ny nz]]
-                            (quad c i0 i1 i2 i3 nx ny nz tile tex-index)))
+                  (mapcat (fn [[i0 i1 i2 i3 nx ny nz u-idx v-idx]]
+                            (quad c i0 i1 i2 i3 nx ny nz
+                                  (/ (double (nth size u-idx)) texel-world)
+                                  (/ (double (nth size v-idx)) texel-world)
+                                  tex-index)))
                   vec)]
     {:data data :count 36 :stride 9}))

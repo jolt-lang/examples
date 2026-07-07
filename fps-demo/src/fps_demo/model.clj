@@ -127,7 +127,8 @@
                 (ffi/write vert-buf :float (* i 4) (double (first s)))
                 (recur (next s) (inc i))))
             {:verts out-verts :vert-buf vert-buf :frames frame-offs
-             :stride stride :num-verts (* num-indices 3)})
+             :stride stride :num-verts (* num-indices 3)
+             :y-min min-y :y-max max-y})
          (let [voff     (* fi num-verts 3)
                new-verts (loop [face 0 acc out-verts]
                             (if (>= face num-indices)

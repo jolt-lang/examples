@@ -39,6 +39,12 @@
 
 (def ^:private eye-offset (nth player/half 1))   ; eye sits half-height above center
 
+;; The player's spawn as a COLLISION CENTER (info_player_start). player-spawn
+;; returns the eye position; the center is eye-offset lower. Both the initial
+;; state and respawn use this so death drops you back exactly where you started.
+(def ^:private spawn-center
+  [(nth spawn-eye 0) (- (nth spawn-eye 1) eye-offset) (nth spawn-eye 2)])
+
 ;; Initial enemies: spawned from the real q1k3 map entities (m1) via
 ;; ent/spawn-from-entities — every grunt/enforcer/ogre/zombie the level declares,
 ;; at its world position with its patrol direction. Falls back to a single grunt
@@ -53,7 +59,7 @@
                         (nth spawn-eye 2)]
                        0.0 0)])))
 
-(def ^:private game (atom {:p       [(nth spawn-eye 0) (- (nth spawn-eye 1) eye-offset) (nth spawn-eye 2)]
+(def ^:private game (atom {:p       spawn-center
                            :v       [0.0 0.0 0.0]
                            :a       [0.0 0.0 0.0]
                            :f       10
@@ -219,7 +225,7 @@
              ;; DEAD: only the respawn timer advances. After 2 s, reset to spawn.
              (let [time' (+ (:time g) tick)]
                (if (> (- time' (or (:death-time g) time')) 2.0)
-                 (-> (player/respawn-player g spawn-eye)
+                 (-> (player/respawn-player g spawn-center)
                      (assoc :enemies (spawn-grunts)
                             :projectiles [] :particles [] :lights []
                             :death-time nil :time time'))

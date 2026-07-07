@@ -5,13 +5,12 @@
 
   All builders return a Clojure vector of Float, 6 per vertex (2 triangles = 6
   verts = 36 floats per quad). Coordinate spaces:
-    - hud-bar-verts:        screen pixels (drawn under an ortho projection)
-    - particle-box-verts:   world units (drawn under proj*view)
-    - viewmodel-verts:      screen pixels (drawn under ortho), bottom-right")
+    - status-bar / number / crosshair / viewmodel: screen pixels (ortho)
+    - particle-point-verts:                        world units (proj*view)")
 
-(def ^:const hud-margin   20.0)   ; px inset from bottom-left
-(def ^:const hud-bar-w  200.0)
-(def ^:const hud-bar-h   16.0)
+(def ^:const statusbar-h    64.0)   ; px height of the bottom status bar
+(def ^:const crosshair-arm  10.0)   ; px half-length of each crosshair arm
+(def ^:const crosshair-thick 2.0)   ; px crosshair stroke
 
 (def ^:const particle-half 1.6)   ; blood blob half-size in world units
 
@@ -40,19 +39,59 @@
    x1 y1 z r g b
    x0 y1 z r g b])
 
-(defn hud-bar-verts
-  "Health bar: a dark background quad + a colored fill quad whose width tracks
-  `fill` (0..1). Anchored bottom-left with a margin. 2 quads = 72 floats."
-  [w h fill]
-  (let [x0 hud-margin
-        y0 hud-margin
-        x1 (+ hud-margin hud-bar-w)
-        y1 (+ hud-margin hud-bar-h)
-        fill-x1 (+ x0 (* hud-bar-w (double fill)))
-        bg   (quad x0 y0 x1 y1 0.0 [0.12 0.12 0.14])
-        fcol (if (<= fill 0.25) [0.85 0.15 0.10] [0.15 0.75 0.20])
-        fg   (if (<= fill 0.0) [] (quad x0 y0 fill-x1 y1 0.1 fcol))]
-    (into bg fg)))
+(defn status-bar-verts
+  "Quake-style bottom status bar: one dark strip across the screen width."
+  [w _h]
+  (quad 0.0 0.0 (double w) statusbar-h 0.05 [0.07 0.06 0.06]))
+
+;; --- seven-segment numbers (no font atlas) ----------------------------------
+;; q1k3/Quake show health & ammo as big digits. With only the flat pos+color
+;; shader, each digit is drawn as up to seven rectangle segments (a..g).
+(def ^:private seg-of
+  {0 #{:a :b :c :d :e :f}    1 #{:b :c}
+   2 #{:a :b :g :e :d}       3 #{:a :b :g :c :d}
+   4 #{:f :g :b :c}          5 #{:a :f :g :c :d}
+   6 #{:a :f :g :e :c :d}    7 #{:a :b :c}
+   8 #{:a :b :c :d :e :f :g} 9 #{:a :b :c :d :f :g}})
+
+(defn- digit-verts
+  "One seven-segment digit `d` (0-9) with bottom-left at (x,y), cell height `s`,
+  colored `col`. Cell width is 0.62*s, stroke 0.16*s."
+  [d x y s col]
+  (let [w   (* s 0.62) th (* s 0.16) z 0.3
+        segs (seg-of d #{})
+        mid (+ y (* 0.5 (- s th)))
+        add (fn [acc on q] (if on (into acc q) acc))]
+    (-> []
+        (add (segs :a) (quad x            (- (+ y s) th) (+ x w)      (+ y s)        z col))
+        (add (segs :g) (quad x            mid            (+ x w)      (+ mid th)     z col))
+        (add (segs :d) (quad x            y              (+ x w)      (+ y th)       z col))
+        (add (segs :f) (quad x            (+ y (* 0.5 s))(+ x th)     (+ y s)        z col))
+        (add (segs :b) (quad (- (+ x w) th)(+ y (* 0.5 s))(+ x w)     (+ y s)        z col))
+        (add (segs :e) (quad x            y              (+ x th)     (+ y (* 0.5 s))z col))
+        (add (segs :c) (quad (- (+ x w) th) y            (+ x w)      (+ y (* 0.5 s))z col)))))
+
+(defn- int->digits [n]
+  (if (zero? n) [0]
+      (loop [n n acc ()] (if (zero? n) (vec acc) (recur (quot n 10) (cons (mod n 10) acc))))))
+
+(defn number-verts
+  "Non-negative integer `n` as seven-segment digits, left to right from (x,y),
+  cell height `s`, colored `col`."
+  [n x y s col]
+  (let [adv (* s 0.82)]
+    (loop [ds (int->digits (max 0 (int n))) i 0 acc []]
+      (if (empty? ds) acc
+          (recur (rest ds) (inc i)
+                 (into acc (digit-verts (first ds) (+ x (* i adv)) y s col)))))))
+
+(defn crosshair-verts
+  "A small centered `+` crosshair in screen pixels (ortho)."
+  [w h]
+  (let [cx (* 0.5 (double w)) cy (* 0.5 (double h))
+        a crosshair-arm t (* 0.5 crosshair-thick) z 0.2 col [0.85 0.9 0.85]]
+    (into (quad (- cx a) (- cy t) (+ cx a) (+ cy t) z col)
+          (quad (- cx t) (- cy a) (+ cx t) (+ cy a) z col))))
 
 ;; 36 corner refs (3 per tri × 12 tris) into cube-corners, in emit order, so the
 ;; per-particle loop is a flat aset stream with no intermediate allocation.

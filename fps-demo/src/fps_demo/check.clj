@@ -36,8 +36,9 @@
   ;; --- textured box geometry --------------------------------------------------
   ;; A box is 6 faces * 2 tris * 3 verts = 36 vertices, each
   ;; [x y z u v nx ny nz tex-index] (stride 9), so the flat data has 324 floats.
-  ;; UVs stay within [0, tile]; tex-index selects the texture-array layer.
-  (let [b     (tex/box [0.0 0.0 0.0] [2.0 2.0 2.0] 1.0 5)
+  ;; Each face tiles the texture by its own world size / texel-world (64), so a
+  ;; non-cubic box has DIFFERENT U/V tile counts per face (no single-tile stretch).
+  (let [b     (tex/box [0.0 0.0 0.0] [64.0 32.0 64.0] 5)
         data  (:data b)]
     (println "textured box: count =" (:count b) " stride =" (:stride b)
              " floats =" (count data))
@@ -47,11 +48,15 @@
     (let [pos (vec (map (fn [i] (nth data i)) (range 0 (count data) 9)))
           [pxmin pxmax] (min-max pos)]
       (assert (approx= pxmin 0.0) (str "x min should be box min 0.0, got " pxmin))
-      (assert (approx= pxmax 2.0) (str "x max should be box max 2.0, got " pxmax)))
-    (let [uvs (vec (map (fn [i] (nth data (+ i 3))) (range 0 (count data) 9)))
-          [umin umax] (min-max uvs)]
-      (assert (approx= umin 0.0) "uv min is 0")
-      (assert (approx= umax 1.0) "uv max equals tile (1.0)"))
+      (assert (approx= pxmax 64.0) (str "x max should be box max 64.0, got " pxmax)))
+    (let [us (vec (map (fn [i] (nth data (+ i 3))) (range 0 (count data) 9)))
+          vs (vec (map (fn [i] (nth data (+ i 4))) (range 0 (count data) 9)))]
+      ;; 64-unit edge -> 64/64 = 1.0 tile; 32-unit edge -> 0.5. Both appear, which
+      ;; is exactly what one shared `tile` could not produce (that was the stretch).
+      (assert (approx= 1.0 (apply max us)) "max U tile = 64/64 = 1.0")
+      (assert (approx= 1.0 (apply max vs)) "max V tile = 1.0")
+      (assert (some #(approx= 0.5 %) us) "a 32-unit face edge tiles 0.5 (per-face density)")
+      (assert (some #(approx= 0.5 %) vs) "a 32-unit face edge tiles 0.5 on V too"))
     (let [idx (vec (map (fn [i] (nth data (+ i 8))) (range 0 (count data) 9)))
           [imin imax] (min-max idx)]
       (assert (approx= imin 5.0) "every vertex tex-index is the face layer (5)")
@@ -1200,37 +1205,32 @@
         (assert (approx= 50.0 (:health pl-far)) "far/used alone heal nothing"))))
   (println "pickup: health +25 in radius / consume / idempotent ok")
 
-  ;; --- HUD: bar fill clamps 0..1; muzzle flash window is muzzle-duration -------
-  ;; bar-fill maps the live health to a [0,1] fill, clamped at both ends so a
-  ;; dead player shows an empty bar and overheal never overflows it.
-  (assert (approx= 1.0 (hud/bar-fill hud/player-max-health)) "full health -> full bar")
-  (assert (approx= 0.5 (hud/bar-fill (/ hud/player-max-health 2.0))) "half health -> half bar")
-  (assert (approx= 0.0 (hud/bar-fill 0.0)) "dead -> empty bar")
-  (assert (approx= 0.0 (hud/bar-fill -10.0)) "negative -> clamped to 0")
-  (assert (approx= 1.0 (hud/bar-fill 999.0)) "overheal -> clamped to 1")
+  ;; --- HUD: muzzle flash window is muzzle-duration ----------------------------
   ;; muzzle flash: visible for muzzle-duration after fire, then off; nil fire-time = off
   (assert (true?  (hud/muzzle-active? 1.00 0.97)) "flash on within window")
   (assert (false? (hud/muzzle-active? 1.00 0.90)) "flash off after window")
   (assert (false? (hud/muzzle-active? 5.00 nil))  "no fire ever -> no flash")
-  (println "hud: bar-fill clamp + muzzle-flash window ok")
+  (println "hud: muzzle-flash window ok")
 
-  ;; --- overlay geometry: HUD bar / blood boxes / viewmodel (flat shader) -------
+  ;; --- overlay geometry: status bar / numbers / crosshair / viewmodel ---------
   ;; Each builder returns interleaved pos3+color3 floats (6/vertex, 6 verts/quad).
-  ;; hud-bar: a background quad + a fill quad => 2 quads = 12 verts = 72 floats;
-  ;;   the fill quad width tracks the health fraction.
-  (let [full (ov/hud-bar-verts 800 600 1.0)
-        half (ov/hud-bar-verts 800 600 0.5)]
-    (assert (= 72 (count full)) (str "hud bar = 2 quads = 72 floats, got " (count full)))
-    ;; fill at half health uses half the bar width (spot-check: a fill vertex's
-    ;; x is ~half the background's right edge)
-    (let [bg-left    (nth full 0)   ; bg vert0.x
-          bg-right   (nth full 6)   ; bg vert1.x
-          fill-left  (nth half 36)  ; fill quad vert0.x
-          fill-right (nth half 42)  ; fill quad vert1.x
-          bg-w   (- bg-right bg-left)
-          fill-w (- fill-right fill-left)]
-      (assert (approx= (* bg-w 0.5) fill-w)
-              (str "half-health fill is half-width: bg-w=" bg-w " fill-w=" fill-w))))
+  ;; status bar: one full-width quad = 36 floats.
+  (assert (= 36 (count (ov/status-bar-verts 800 600))) "status bar is one quad (36 floats)")
+  ;; seven-segment numbers: each digit is >=2 and <=7 segment quads (36 floats each);
+  ;; "8" lights all seven, "1" only two, and a multi-digit number scales by count.
+  (let [n1  (ov/number-verts 1 0.0 0.0 40.0 [1.0 1.0 1.0])
+        n8  (ov/number-verts 8 0.0 0.0 40.0 [1.0 1.0 1.0])
+        n88 (ov/number-verts 88 0.0 0.0 40.0 [1.0 1.0 1.0])]
+    (assert (= (* 2 36) (count n1))  "digit 1 = 2 segments")
+    (assert (= (* 7 36) (count n8))  "digit 8 = 7 segments")
+    (assert (= (* 2 (count n8)) (count n88)) "88 is two 8s")
+    ;; digits advance to the right: the second digit's x > first digit's x
+    (assert (> (nth n88 (+ (count n8) 0)) (nth n88 0)) "second digit is further right"))
+  ;; crosshair: two quads (horizontal + vertical arm) centered at (w/2, h/2)
+  (let [c (ov/crosshair-verts 800 600)
+        xs (map c (range 0 (count c) 6))]
+    (assert (= (* 2 36) (count c)) "crosshair is two quads")
+    (assert (approx= 400.0 (/ (+ (apply min xs) (apply max xs)) 2.0)) "crosshair centered on w/2"))
   ;; particle points: one GL_POINTS vertex per particle (pos3 + color3 = 6 floats)
   (let [ps  [{:pos [1.0 2.0 3.0]} {:pos [4.0 5.0 6.0]}]
         fv  (ov/particle-point-verts ps)]
@@ -1253,7 +1253,7 @@
       ;; idle is 4 body quads (24 verts = 144 floats); flash adds 1 quad (30 verts).
       (assert (approx= 144.0 (double (count idle)))  (str "idle = 4 quads = 144 floats; got " (count idle)))
       (assert (approx= 180.0 (double (count flash))) (str "flash = 5 quads = 180 floats; got " (count flash)))))
-  (println "overlay: hud-bar / particle-point / viewmodel vert counts ok")
+  (println "overlay: status-bar / numbers / crosshair / particle-point / viewmodel ok")
 
   ;; --- #65/#74 HUD: ammo readout (faithful GL analog of q1k3's ∞ text) -------
   ;; q1k3 draws the active weapon's ammo as DOM text — `weapon._needs_ammo ?
