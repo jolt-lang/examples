@@ -12,6 +12,8 @@
             [jolt.ffi           :as ffi]
             [fps-demo.shaders   :as sh]
             [fps-demo.textured  :as tex]
+            [fps-demo.texture   :as ttt]
+            [fps-demo.textures  :as textures]
             [fps-demo.player    :as player]
             [fps-demo.map       :as lvl]
             [fps-demo.maps.l    :as lvl-data]
@@ -27,39 +29,57 @@
 (def ^:private GL-FALSE          (int 0))
 (def ^:private GL-DYNAMIC-DRAW   (int 0x88E8))
 
-(defn- checker-pixels
-  "A w×h RGBA byte buffer for a two-tone checkerboard with c-pixel squares.
-  Returned as a jolt.ffi pointer; caller frees it."
-  [w h c]
-  (let [p (ffi/alloc (* w h 4))]
-    (loop [y 0]
-      (when (< y h)
-        (loop [x 0]
-          (when (< x w)
-            (let [on? (zero? (bit-and (+ (quot x c) (quot y c)) 1))
-                  v   (if on? 200 40)
-                  i   (+ (* y w 4) (* x 4))]
-              (ffi/write p :u8 i       v)
-              (ffi/write p :u8 (+ i 1) v)
-              (ffi/write p :u8 (+ i 2) v)
-              (ffi/write p :u8 (+ i 3) 255)
-              (recur (inc x)))))
-        (recur (inc y))))
-    p))
-
-(defn- make-texture
-  "Upload an 64×64 RGBA checkerboard to a fresh GL texture; return its id."
+(defn- lcg-rng
+  "A deterministic 0-arg float [0,1) generator (fixed seed) so the baked noise
+  textures are stable across runs (q1k3 uses Math.random once at load)."
   []
-  (let [tex (gl/gen-one gl/gl-gen-textures)]
+  (let [s (atom (long 123456789))]
+    (fn []
+      (let [n (long (mod (+ (* @s 1103515245) 12345) 2147483648))]
+        (reset! s n)
+        (/ (double n) 2147483648.0)))))
+
+(defn- resample-to-64
+  "Nearest-neighbour resample a w×h RGBA byte vector to 64×64, since a
+  GL_TEXTURE_2D_ARRAY requires every layer to share one dimension. q1k3's set is
+  64×64 and 32×32; the 32s double to 64. Returns a flat 64*64*4 byte vector."
+  [w h px]
+  (let [at (fn [x y]
+             (let [sx (int (* (/ x 64.0) w))
+                   sy (int (* (/ y 64.0) h))
+                   so (* (+ (* sy w) sx) 4)]
+                [(aget px so) (aget px (+ so 1)) (aget px (+ so 2)) (aget px (+ so 3))]))]
+    (vec (for [y (range 64) x (range 64) c (at x y)] c))))
+
+(defn- make-texture-atlas
+  "Decode all 31 q1k3 textures, resample each to 64×64, and upload them stacked
+  vertically into one GL_TEXTURE_2D atlas (64 wide × 64×N tall). Each block
+  selects its texture via a per-vertex V offset the shader computes from
+  a_tex_index: v = (tex_index + fract(v_uv.y)) / num_textures. A 2D atlas (not a
+  GL_TEXTURE_2D_ARRAY) because this macOS GtkGLArea context rejects the
+  GL_TEXTURE_2D_ARRAY target with INVALID_ENUM despite reporting GL 4.1 —
+  verified by glGetError probing (glTexParameteri on the bound array target
+  fails immediately; the plain 2D target succeeds). Returns {:tex id :num-tex N}."
+  []
+  (let [layers (mapv (fn [t] (resample-to-64 (:w t) (:h t) (:pixels t)))
+                     (ttt/decode-all textures/data (lcg-rng)))
+        n      (count layers)
+        blob   (reduce into [] layers)
+        tex    (gl/gen-one gl/gl-gen-textures)]
     (gl/gl-bind-texture gl/GL-TEXTURE-2D tex)
-    (let [pixels (checker-pixels 64 64 8)]
-      (gl/gl-tex-image-2d gl/GL-TEXTURE-2D 0 GL-RGBA8 64 64 0 GL-RGBA GL-UNSIGNED-BYTE pixels)
-      (ffi/free pixels))
+    (let [ptr (ffi/alloc (count blob))]
+      ;; one bulk copy of the whole RGBA blob (508K bytes) into native memory —
+      ;; a per-byte ffi/write loop froze realize! for many seconds. write-array
+      ;; is jolt's native memcpy primitive.
+      (ffi/write-array ptr (byte-array (map int blob)))
+      (gl/gl-tex-image-2d gl/GL-TEXTURE-2D 0 GL-RGBA8 64 (* 64 n) 0
+                          GL-RGBA GL-UNSIGNED-BYTE ptr)
+      (ffi/free ptr))
     (gl/gl-tex-parameter-i gl/GL-TEXTURE-2D gl/GL-TEXTURE-MIN-FILTER gl/GL-NEAREST)
     (gl/gl-tex-parameter-i gl/GL-TEXTURE-2D gl/GL-TEXTURE-MAG-FILTER gl/GL-NEAREST)
-    (gl/gl-tex-parameter-i gl/GL-TEXTURE-2D gl/GL-TEXTURE-WRAP-S gl/GL-CLAMP-TO-EDGE)
+    (gl/gl-tex-parameter-i gl/GL-TEXTURE-2D gl/GL-TEXTURE-WRAP-S gl/GL-REPEAT)
     (gl/gl-tex-parameter-i gl/GL-TEXTURE-2D gl/GL-TEXTURE-WRAP-T gl/GL-CLAMP-TO-EDGE)
-    tex))
+    {:tex tex :num-tex n}))
 
 ;; --- Phase 1: the real q1k3 level -------------------------------------------
 ;; Decode the packed container once and turn every block into textured box
@@ -80,17 +100,20 @@
 
 (defn- level-geometry
   "Build one interleaved vertex buffer for every block. Returns
-  {:data [...floats] :count N :stride 8}. `tile` per block scales the texture
-  roughly once per 32-unit cell so large walls don't smear a single tile."
+  {:data [...floats] :count N :stride 9}. Each block's :tex (the q1k3 texture
+  sentinel) is baked into every vertex as the a_tex_index layer. `tile` per block
+  scales the texture roughly once per 32-unit cell so large walls don't smear a
+  single tile."
   []
   (let [blocks (first-map-blocks)]
     (loop [in blocks data [] count 0]
       (if (empty? in)
-        {:data data :count count :stride 8}
-        (let [{:keys [min size]} (lvl/world-box (first in))
+        {:data data :count count :stride 9}
+        (let [b   (first in)
+              {:keys [min size]} (lvl/world-box b)
               [sx sy sz] size
               tile (max 1.0 (/ (max sx (max sy sz)) 32.0))
-              box  (tex/box min size tile)]
+              box  (tex/box min size tile (:tex b))]
           (recur (rest in)
                  (into data (:data box))
                  (+ count (:count box))))))))
@@ -109,16 +132,16 @@
   "Compile the q1k3 pipeline + upload the whole static level into one VBO. Call
    once, with a current GL context (i.e. from on-realize). Returns the opaque
    state map, including the camera eye/look derived from the player spawn."
-  []
-  (let [{:keys [vs-src fs-src]} (shader/sources sh/lit-spec)
-        prog (gl/make-program vs-src fs-src)]
+   []
+   (let [{:keys [vs-src fs-src]} (shader/sources sh/lit-spec)
+         prog (gl/make-program vs-src fs-src)]
     (assert prog "q1k3 lit shader failed to compile/link")
     (let [u      (fn [^String n] (gl/gl-get-uniform-location prog n))
           geo    (level-geometry)
           eye    (player-spawn)
           vao    (gl/gen-one gl/gl-gen-vertex-arrays)
           vbo    (gl/gen-one gl/gl-gen-buffers)
-          stride 32]
+          stride 36]
       (assert (pos? (:count geo)) "level geometry has vertices")
       (gl/gl-bind-vertex-array vao)
       (gl/gl-bind-buffer gl/GL-ARRAY-BUFFER vbo)
@@ -127,12 +150,14 @@
                            (* (ffi/sizeof :float) (count (:data geo)))
                            ptr gl/GL-STATIC-DRAW)
         (ffi/free ptr))
-      (gl/gl-enable-vertex-attrib-array 0)                 ; a_pos  (location 0)
+      (gl/gl-enable-vertex-attrib-array 0)                 ; a_pos       (location 0)
       (gl/gl-vertex-attrib-pointer 0 3 gl/GL-FLOAT GL-FALSE stride 0)
-      (gl/gl-enable-vertex-attrib-array 1)                 ; a_uv   (location 1)
+      (gl/gl-enable-vertex-attrib-array 1)                 ; a_uv        (location 1)
       (gl/gl-vertex-attrib-pointer 1 2 gl/GL-FLOAT GL-FALSE stride 12)
-      (gl/gl-enable-vertex-attrib-array 2)                 ; a_normal(location 2)
+      (gl/gl-enable-vertex-attrib-array 2)                 ; a_normal    (location 2)
       (gl/gl-vertex-attrib-pointer 2 3 gl/GL-FLOAT GL-FALSE stride 20)
+      (gl/gl-enable-vertex-attrib-array 3)                 ; a_tex_index (location 3)
+      (gl/gl-vertex-attrib-pointer 3 1 gl/GL-FLOAT GL-FALSE stride 32)
       (gl/gl-bind-vertex-array 0)
       ;; flat (unlit) program + one dynamic overlay VAO/VBO shared by the HUD bar,
       ;; blood particles, and the first-person viewmodel (pos3+color3, stride 24).
@@ -150,17 +175,21 @@
           (gl/gl-enable-vertex-attrib-array 1)             ; a_color (location 1)
           (gl/gl-vertex-attrib-pointer 1 3 gl/GL-FLOAT GL-FALSE fstride 12)
           (gl/gl-bind-vertex-array 0)
-          {:prog prog :vao vao :tex (make-texture) :count (:count geo)
-           :eye eye
-           :enemy (init-enemies!)
-           :flat {:prog fprog :vao fovao :vbo fovbo
-                  :loc {:mvp (fu "u_mvp")}}
-           :loc {:mvp        (u "u_mvp")
-                 :model      (u "u_model")
-                 :tex        (u "u_tex")
-                 :light-pos  (u "u_light_pos")
-                 :light-col  (u "u_light_col")
-                 :light-dist (u "u_light_dist")}})))))
+          (let [atlas (make-texture-atlas)]
+            {:prog prog :vao vao
+             :tex (:tex atlas) :num-tex (:num-tex atlas)
+             :count (:count geo)
+             :eye eye
+             :enemy (init-enemies!)
+             :flat {:prog fprog :vao fovao :vbo fovbo
+                    :loc {:mvp (fu "u_mvp")}}
+             :loc {:mvp        (u "u_mvp")
+                   :model      (u "u_model")
+                   :tex        (u "u_tex")
+                   :num-tex    (u "u_num_textures")
+                   :light-pos  (u "u_light_pos")
+                   :light-col  (u "u_light_col")
+                   :light-dist (u "u_light_dist")}}))))))
 
 (defn- upload-mat4
   "Write a 4×4 matrix to a uniform location as column-major (transpose=FALSE)."
@@ -241,6 +270,7 @@
     (gl/gl-active-texture gl/GL-TEXTURE0)
     (gl/gl-bind-texture gl/GL-TEXTURE-2D (:tex state))
     (gl/gl-uniform-1i (:tex locs) 0)
+    (gl/gl-uniform-1f (:num-tex locs) (double (:num-tex state)))
     (gl/gl-uniform-3f (:light-pos locs) ex (+ ey 64.0) ez)
     (gl/gl-uniform-3f (:light-col locs) 1.0 0.85 0.6)
     (gl/gl-uniform-1f (:light-dist locs) 512.0)
@@ -265,6 +295,8 @@
       (draw-flat! state ortho
                   (ov/viewmodel-verts (hud/muzzle-active? (:time hmap)
                                                           (:fire-time hmap))))
+      ;; ammo readout (∞ for the infinite-ammo shotgun), above the health bar.
+      (draw-flat! state ortho (ov/ammo-verts [45.0 70.0]))
       (gl/gl-enable gl/GL-DEPTH-TEST))))
 
 ;; --- enemy model matrix (pure, #52[C]) --------------------------------------

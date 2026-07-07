@@ -18,8 +18,11 @@
               [fps-demo.pickup    :as pkup]
               [fps-demo.hud       :as hud]
               [fps-demo.overlay   :as ov]
+              [fps-demo.texture   :as ttt]
+              [fps-demo.textures  :as textures]
             [glimmer-gl.matrix  :as mat]
             [jolt.ffi           :as ffi]
+            [fps-demo.capture    :as capture]
             [glimmer-gl.gtk]))                         ; side-effect: widget registry
 
 (defn- approx= [a b] (< (Math/abs (- a b)) 1e-9))
@@ -30,34 +33,42 @@
 
 (defn -main [& _]
   ;; --- textured box geometry --------------------------------------------------
-  ;; A box is 6 faces * 2 tris * 3 verts = 36 vertices, each [x y z u v nx ny nz]
-  ;; (stride 8), so the flat data has 288 floats. UVs stay within [0, tile].
-  (let [b     (tex/box [0.0 0.0 0.0] [2.0 2.0 2.0] 1.0)
+  ;; A box is 6 faces * 2 tris * 3 verts = 36 vertices, each
+  ;; [x y z u v nx ny nz tex-index] (stride 9), so the flat data has 324 floats.
+  ;; UVs stay within [0, tile]; tex-index selects the texture-array layer.
+  (let [b     (tex/box [0.0 0.0 0.0] [2.0 2.0 2.0] 1.0 5)
         data  (:data b)]
     (println "textured box: count =" (:count b) " stride =" (:stride b)
              " floats =" (count data))
     (assert (= 36 (:count b))  "a box tessellates to 36 vertices")
-    (assert (= 8  (:stride b)) "interleaved stride is pos(3)+uv(2)+normal(3) = 8")
-    (assert (= 288 (count data)) "36 verts * 8 floats = 288")
-    (let [pos (vec (map (fn [i] (nth data i)) (range 0 (count data) 8)))
+    (assert (= 9  (:stride b)) "interleaved stride is pos(3)+uv(2)+normal(3)+tex-index(1) = 9")
+    (assert (= 324 (count data)) "36 verts * 9 floats = 324")
+    (let [pos (vec (map (fn [i] (nth data i)) (range 0 (count data) 9)))
           [pxmin pxmax] (min-max pos)]
       (assert (approx= pxmin 0.0) (str "x min should be box min 0.0, got " pxmin))
       (assert (approx= pxmax 2.0) (str "x max should be box max 2.0, got " pxmax)))
-    (let [uvs (vec (map (fn [i] (nth data (+ i 3))) (range 0 (count data) 8)))
+    (let [uvs (vec (map (fn [i] (nth data (+ i 3))) (range 0 (count data) 9)))
           [umin umax] (min-max uvs)]
       (assert (approx= umin 0.0) "uv min is 0")
-      (assert (approx= umax 1.0) "uv max equals tile (1.0)")))
+      (assert (approx= umax 1.0) "uv max equals tile (1.0)"))
+    (let [idx (vec (map (fn [i] (nth data (+ i 8))) (range 0 (count data) 9)))
+          [imin imax] (min-max idx)]
+      (assert (approx= imin 5.0) "every vertex tex-index is the face layer (5)")
+      (assert (approx= imax 5.0) "every vertex tex-index is the face layer (5)")))
 
   ;; --- q1k3 point-light + texture shader spec ---------------------------------
   ;; The lit shader must declare a texture sampler, per-vertex UV, and a point
   ;; light (position + colour + range). We check the generated GLSL, not the
   ;; compiled program (compilation needs a GL context — verified at runtime).
   (let [{:keys [vs-src fs-src]} (shader/sources sh/lit-spec)]
-    (assert (str/includes? fs-src "sampler2D") "lit shader samples a texture")
+    (assert (str/includes? fs-src "sampler2D") "lit shader samples a 2D texture")
+    (assert (str/includes? fs-src "u_num_textures") "lit shader knows the atlas texture count")
     (assert (str/includes? fs-src "u_light_pos") "lit shader has a point light position")
     (assert (str/includes? fs-src "u_light_col") "lit shader has a point light colour")
     (assert (str/includes? vs-src "a_uv") "vertex shader reads a_uv attribute")
+    (assert (str/includes? vs-src "a_tex_index") "vertex shader reads the tex-array layer")
     (assert (str/includes? vs-src "v_uv") "vertex shader writes the v_uv varying")
+    (assert (str/includes? vs-src "v_tex_index") "vertex shader writes the tex-array layer")
     (assert (str/includes? fs-src "v_uv") "fragment shader reads v_uv")
     (println "shader sources generated:"
              "vs" (count vs-src) "chars, fs" (count fs-src) "chars"))
@@ -100,11 +111,11 @@
     (assert (= {:type 12 :x 5 :y 6 :z 7 :data1 0 :data2 0} (nth ents 1))
            "light entity")
     ;; solid cells: block0 fills (0,0,0); block1 fills x in {1,2}, y 0, z in {0,1}
-    (assert (contains? cells [0 0 0]) "block0 is solid")
-    (assert (contains? cells [1 0 0]) "block1 cell (1,0,0) solid")
-    (assert (contains? cells [2 0 1]) "block1 cell (2,0,1) solid")
-    (assert (not (contains? cells [3 0 0])) "cell past block1 is empty")
-    (assert (not (contains? cells [0 1 0])) "cell above block0 is empty"))
+    (assert (contains? cells (lvl/cell-key 0 0 0)) "block0 is solid")
+    (assert (contains? cells (lvl/cell-key 1 0 0)) "block1 cell (1,0,0) solid")
+    (assert (contains? cells (lvl/cell-key 2 0 1)) "block1 cell (2,0,1) solid")
+    (assert (not (contains? cells (lvl/cell-key 3 0 0))) "cell past block1 is empty")
+    (assert (not (contains? cells (lvl/cell-key 0 1 0))) "cell above block0 is empty"))
   (println "map decoder: 1 map, 2 blocks, 2 entities, 5 solid cells")
 
   ;; --- decode the REAL q1k3 level (build/l = m1 ++ m2) -----------------------
@@ -151,7 +162,7 @@
   (println "player physics: free-fall gravity integration ok")
 
   ;; voxel AABB collision query (cell [0 0 0] spans world x,z in [0,32), y in [0,16))
-  (let [cells #{[0 0 0]}]
+  (let [cells #{(lvl/cell-key 0 0 0)}]
     (assert (player/block-at-box? cells [0.0 0.0 0.0] [10.0 10.0 10.0]) "box inside cell")
     (assert (player/block-at-box? cells [-1.0 -1.0 -1.0] [0.0 0.0 0.0]) "box touching cell edge")
     (assert (not (player/block-at-box? cells [33.0 0.0 0.0] [40.0 10.0 10.0])) "box past cell")
@@ -162,7 +173,7 @@
   ;; half-height 24 -> resting center >= 40. After enough ticks the player is
   ;; on-ground and stable.
   (let [tick      0.016666667
-        floor     (into #{} (for [x (range 0 4) z (range 0 4)] [x 0 z]))
+        floor     (into #{} (for [x (range 0 4) z (range 0 4)] (lvl/cell-key x 0 z)))
         s0        {:p [16.0 1000.0 16.0] :v [0.0 -2000.0 0.0] :a [0.0 0.0 0.0]
                    :f 10 :on-ground false}
         final     (loop [s s0 n 0]
@@ -181,8 +192,8 @@
   ;; (world y [0,64)) so the grounded player's 48-tall box overlaps it.
   (let [tick      0.016666667
         cells     (into #{} (concat
-                              (for [y (range 0 4)] [2 y 0])    ; tall wall, world x [64,96)
-                              (for [cx (range 0 2)] [cx 0 0]))) ; floor x [0,64) under approach
+                              (for [y (range 0 4)] (lvl/cell-key 2 y 0))    ; tall wall, world x [64,96)
+                              (for [cx (range 0 2)] (lvl/cell-key cx 0 0)))) ; floor x [0,64) under approach
         s0        {:p [0.0 40.0 0.0] :v [300.0 0.0 0.0] :a [0.0 0.0 0.0]
                    :f 10 :on-ground true}
         final     (loop [s s0 n 0]
@@ -197,10 +208,25 @@
 
   ;; mouse look: yaw advances with mouse-x; pitch clamps to [-1.5,1.5]
   (let [[yaw1 pitch1] (player/look 0.0 0.0 1000.0 0.0)
-        [_ pitch2]    (player/look 0.0 0.0 0.0 1.0e7)]
+        [_ pitch2]    (player/look 0.0 0.0 0.0 1.0e7)
+        [_ pitch3]    (player/look 0.0 0.0 0.0 -1.0e7)]
     (assert (pos? yaw1) "mouse +x adds yaw")
     (assert (approx= 0.0 pitch1) "no mouse y -> no pitch")
-    (assert (approx= 1.5 pitch2) "pitch clamps to +1.5"))
+    (assert (approx= 1.5 pitch2) "pitch clamps to +1.5")
+    (assert (approx= -1.5 pitch3) "pitch clamps to -1.5"))
+
+  ;; #66/#75: configurable sensitivity (one factor for both axes) + invert-Y.
+  ;; q1k3 uses a single _mouse_sensitivity; inverted negates the Y factor. With a
+  ;; higher sens, the same delta turns farther; invert flips the pitch sign.
+  (let [s1 (player/look 0.0 0.0 1000.0 0.0     {:sens 0.00030})
+        s2 (player/look 0.0 0.0 1000.0 0.0     {:sens 0.00015})
+        d  (player/look 0.0 0.0 0.0    1000.0  {:sens 0.00030})
+        i  (player/look 0.0 0.0 0.0    1000.0  {:sens 0.00030 :invert true})]
+    (assert (approx= (first s1) (* 1000.0 0.00030)) "yaw scales by :sens")
+    (assert (approx= (first s2) (* 1000.0 0.00015)) "lower sens turns less")
+    (assert (> (first s1) (first s2)) "doubled sens doubles yaw")
+    (assert (approx= (second d) (* 1000.0 0.00030)) "pitch scales by :sens (non-inverted: +my = +pitch)")
+    (assert (approx= (second i) (* 1000.0 -0.00030)) "invert negates pitch"))
 
   ;; camera forward must agree with wish-accel's horizontal forward so that W
   ;; walks toward screen center. forward's (x,z) dir == wish-accel forward dir.
@@ -602,6 +628,133 @@
     (assert (true? (:dead? (ent/receive-damage g 40.0 [1.0 0.0 0.0] 5.0 (fn [] 0.0)))) "grunt dies on 40 dmg"))
   (println "entity combat: damage/wake/lethal/idempotent + grunt spec ok")
 
+  ;; --- #72: enemy type-spec table (grunt/enforcer/ogre/zombie) ----------------
+  ;; q1k3 dispatches map entity type-ids to enemy classes (map.js spawn_class):
+  ;; 1 grunt, 2 enforcer, 3 ogre, 4 zombie, 5 hound. Each type overrides health,
+  ;; texture, model, size, speed and (ogre/zombie) attack-distance + anim/state
+  ;; tables. make-enemy-of-type applies the spec; spawn-from-entities turns the
+  ;; decoded map entities into enemies at their world coords (x*32,y*16,z*32).
+  (let [g (ent/make-enemy-of-type :grunt    [0 0 0] 0.0 0)
+        e (ent/make-enemy-of-type :enforcer [0 0 0] 0.0 0)
+        o (ent/make-enemy-of-type :ogre     [0 0 0] 0.0 0)
+        z (ent/make-enemy-of-type :zombie   [0 0 0] 0.0 0)]
+    ;; per-type stats (q1k3 _init): grunt 40hp/tex17, enforcer 80hp/tex19/sz14x44,
+    ;; ogre 200hp/tex20/speed96/atk350, zombie 60hp/tex18/speed0/atk350.
+    (assert (approx= (:health g) 40.0)  "grunt health 40")
+    (assert (= (:texture g) 17)         "grunt texture 17")
+    (assert (approx= (:health e) 80.0)  "enforcer health 80")
+    (assert (= (:texture e) 19)         "enforcer texture 19")
+    (assert (= (:half e) [14.0 44.0 14.0]) "enforcer size 14x44x14")
+    (assert (approx= (:speed o) 96.0)   "ogre speed 96")
+    (assert (approx= (:health o) 200.0) "ogre health 200")
+    (assert (approx= (:attack-distance o) 350.0) "ogre attack-distance 350")
+    (assert (approx= (:speed z) 0.0)    "zombie speed 0")
+    (assert (approx= (:attack-distance z) 350.0) "zombie attack-distance 350")
+    ;; base grunt/enforcer keep the default 800 attack-distance.
+    (assert (approx= (:attack-distance g) 800.0) "grunt attack-distance 800")
+    ;; every typed enemy carries its model keyword (render picks the mesh later).
+    (assert (= (:model o) :ogre)   "ogre model :ogre")
+    (assert (= (:model z) :zombie) "zombie model :zombie"))
+  ;; zombie _receive_damage ignores any hit that isn't a gib (>60): a shotgun
+  ;; blast of 40 leaves it untouched, a grenade of 80 gibs it.
+  (let [z (ent/make-enemy-of-type :zombie [0 0 0] 0.0 0)]
+    (assert (approx= (:health (ent/receive-damage z 40.0 [0 0 0] 5.0 (fn [] 0.0))) 60.0)
+            "zombie shrugs off 40 dmg (gib-only)")
+    (assert (true? (:dead? (ent/receive-damage z 80.0 [0 0 0] 5.0 (fn [] 0.0))))
+            "zombie gibs on 80 dmg"))
+  ;; zombie + ogre FSM respects the per-type attack-distance: a zombie in follow
+  ;; at dist 500 (>350) does NOT enter attack-aim, an ogre at dist 500 (>350)
+  ;; likewise; a grunt at dist 500 (<800) does.
+  (let [z0 (ent/set-state (ent/make-enemy-of-type :zombie [0 0 0] 0.0 0) :follow 0.0 (fn [] 0.0))
+        o0 (ent/set-state (ent/make-enemy-of-type :ogre [0 0 0] 0.0 0) :follow 0.0 (fn [] 0.0))
+        g0 (ent/set-state (ent/make-grunt [0 0 0] 0.0 0) :follow 0.0 (fn [] 0.0))]
+    (assert (= (:state (ent/state-update z0 {:dist 500.0 :angle 0.0 :can-see true} 5.0 (fn [] 0.0))) :follow)
+            "zombie at dist 500 stays following (beyond its 350 attack-range)")
+    (assert (= (:state (ent/state-update o0 {:dist 500.0 :angle 0.0 :can-see true} 5.0 (fn [] 0.0))) :follow)
+            "ogre at dist 500 stays following (beyond its 350 attack-range)")
+    (assert (= (:state (ent/state-update g0 {:dist 500.0 :angle 0.0 :can-see true} 5.0 (fn [] 0.0))) :attack-aim)
+            "grunt at dist 500 attacks (within its 800 attack-range)"))
+  ;; spawn-from-entities: decode the q1k3 entity type-id to an enemy at its world
+  ;; position, with data1 as the patrol direction. Non-enemy entities (type 0
+  ;; player, 8 health pickup) are skipped.
+  (let [es [{:type 1 :x 1 :y 2 :z 3 :data1 0 :data2 0}   ; grunt at (32,32,96)
+            {:type 3 :x 4 :y 0 :z 5 :data1 1 :data2 0}   ; ogre patrolling
+            {:type 5 :x 0 :y 0 :z 0 :data1 0 :data2 0}   ; hound
+            {:type 0 :x 0 :y 0 :z 0 :data1 0 :data2 0}   ; player spawn — skip
+            {:type 8 :x 0 :y 0 :z 0 :data1 0 :data2 0}]  ; pickup — skip
+        spawned (ent/spawn-from-entities es)]
+    (assert (= 3 (count spawned)) "3 enemies spawn (grunt + ogre + hound); player/pickup skipped")
+    (let [[g o h] spawned]
+      (assert (= (:model g) :grunt) "first spawned is the grunt")
+      (assert (approx= (nth (:pos g) 0) 32.0) "grunt world x = 1*32")
+      (assert (approx= (nth (:pos g) 2) 96.0) "grunt world z = 3*32")
+      (assert (= (:model o) :ogre) "second spawned is the ogre")
+      (assert (= (:state o) :patrol) "ogre data1=1 -> patrol")
+      (assert (approx= (:target-yaw o) (/ Math/PI 2)) "ogre patrol faces +X")
+      (assert (= (:model h) :hound) "third spawned is the hound")))
+  (println "entity types: grunt/enforcer/ogre/zombie specs + spawn-from-entities ok")
+
+  ;; End-to-end: the real m1 map declares a mix of entity types; spawning from
+  ;; its decoded entities must yield only valid enemies (grunt/enforcer/ogre/
+  ;; zombie), each with a world position and a known model. This is the wiring
+  ;; core.clj's spawn-grunts now depends on.
+  (let [real (ent/spawn-from-entities (:entities (first (lvl/decode-container lvl-data/bytes))))]
+    (assert (pos? (count real)) "m1 spawns at least one enemy")
+    (assert (every? #{:grunt :enforcer :ogre :zombie :hound} (map :model real))
+            "every m1-spawned enemy is a known type")
+    (assert (every? (fn [e] (= 3 (count (:pos e)))) real)
+            "every spawned enemy has a world position"))
+  (println "entity spawn: real m1 entities -> typed enemies ok")
+
+  ;; --- #73: the hound — melee lunge + contact damage --------------------------
+  ;; q1k3 entity_enemy_hound: 25hp/tex22, size 12x16x12, speed 256, attack-range
+  ;; 200, evade 64. Its attack is NOT a projectile — on :attack-exec it gets a
+  ;; forward velocity lunge (600 fwd, 250 up) and deals 14 on player contact,
+  ;; once per exec (guarded by :did-hit).
+  (let [h (ent/make-enemy-of-type :hound [0 0 0] 0.0 0)]
+    (assert (approx= (:health h) 25.0) "hound health 25")
+    (assert (= (:texture h) 22)        "hound texture 22")
+    (assert (= (:half h) [12.0 16.0 12.0]) "hound size 12x16x12")
+    (assert (approx= (:speed h) 256.0) "hound speed 256")
+    (assert (approx= (:attack-distance h) 200.0) "hound attack-distance 200")
+    (assert (:melee? h)               "hound is melee")
+    (assert (approx= (:melee-damage h) 14.0) "hound melee damage 14"))
+  ;; the lunge: a hound in follow within attack-range transitions through the
+  ;; instant aim->prepare->exec chain (one decision tick each, 0.0 durations) and
+  ;; lands in :attack-exec with a forward leap — NOT a :fire-now (that's ranged).
+  ;; Lunging along yaw 0 (+Z): vz=600, vy=250. Follow's update-at is 0.3, so the
+  ;; first tick lands at 0.4; the exec lunge applies on the 3rd.
+  (let [view {:dist 100.0 :angle 0.0 :can-see true}
+        h0 (ent/set-state (ent/make-enemy-of-type :hound [0 0 0] 0.0 0) :follow 0.0 (fn [] 0.0))
+        f1 (ent/step-enemy h0 view 0.4   0.016 (fn [] 0.0))   ; follow -> attack-aim
+        f2 (ent/step-enemy f1 view 0.416 0.016 (fn [] 0.0))   ; aim -> prepare
+        r  (ent/step-enemy f2 view 0.433 0.016 (fn [] 0.0))]  ; prepare -> exec (lunge)
+    (assert (= (:state f1) :attack-aim)  "hound frame 1: follow -> attack-aim")
+    (assert (= (:state f2) :attack-prepare) "hound frame 2: aim -> prepare")
+    (assert (= (:state r) :attack-exec) "hound frame 3: prepare -> attack-exec (lunge)")
+    (assert (not (:fire-now r)) "hound lunge is melee, not ranged fire-now")
+    (assert (approx= (nth (:vel r) 2) 600.0) "lunge forward (vz=600) along yaw 0")
+    (assert (approx= (nth (:vel r) 1) 250.0) "lunge upward (vy=250)")
+    (assert (not (:on-ground r)) "lunge leaves the ground")
+    (assert (not (:did-hit r)) "lunge starts with did-hit clear"))
+  ;; contact damage: a lunging hound overlapping the player deals 14 once, then
+  ;; is guarded (a second contact the same exec deals 0). A miss deals 0.
+  (let [h  (ent/make-enemy-of-type :hound [0 0 0] 0.0 0)
+        ex (ent/set-state h :attack-exec 0.0 (fn [] 0.0))
+        [h1 d1] (ent/melee-contact ex [0 0 0] [12 24 12])     ; center overlap
+        [h2 d2] (ent/melee-contact h1 [0 0 0] [12 24 12])]    ; same exec again
+    (assert (approx= d1 14.0) "first contact deals 14")
+    (assert (:did-hit h1) "contact sets the did-hit guard")
+    (assert (approx= d2 0.0) "second contact in same exec deals 0 (guarded)")
+    (let [[_ d-miss] (ent/melee-contact ex [500 0 0] [12 24 12])] ; far away
+      (assert (approx= d-miss 0.0) "non-overlapping hound deals 0")))
+  ;; a grunt (non-melee) never deals contact damage even in attack-exec.
+  (let [g  (ent/make-grunt [0 0 0] 0.0 0)
+        gx (ent/set-state g :attack-exec 0.0 (fn [] 0.0))
+        [_ gd] (ent/melee-contact gx [0 0 0] [12 24 12])]
+    (assert (approx= gd 0.0) "grunt (ranged) deals no melee contact damage"))
+  (println "entity hound: melee lunge + contact-damage (once-per-exec) ok")
+
   ;; --- player health/damage/death (entity_player._receive_damage/_kill) ------
   ;; q1k3 player: 100 hp, subtract on hit, dead at <=0. No armor / no i-frames.
   (let [p {:health 100.0 :dead? false}]
@@ -624,7 +777,7 @@
   ;; --- map-trace line of sight (q1k3 map.js) --------------------------------
   ;; Pure over a hand-built solid-cells set. Cells are 32x16x32 (x>>5, y>>4,
   ;; z>>5). block-at? maps a world point to its cell and tests membership.
-  (let [cells #{[0 0 0]}]
+  (let [cells #{(lvl/cell-key 0 0 0)}]
     (assert (lvl/block-at? cells 0.0 0.0 0.0) "origin cell is solid")
     (assert (lvl/block-at? cells 16.0 0.0 0.0) "x=16 -> cell(0,0,0) solid")
     (assert (lvl/block-at? cells 31.0 15.0 31.0) "corner -> cell(0,0,0) solid")
@@ -635,7 +788,7 @@
     (assert (nil? (lvl/map-trace cells [0.0 8.0 8.0] [120.0 8.0 8.0])) "clear path -> nil"))
   ;; map-trace: solid cell on the path -> hit point (march 16-unit steps, first
   ;; sample is one step AFTER the start). Ray +X into cell(1,0,0)=world x[32,64).
-  (let [cells #{[1 0 0]}]
+  (let [cells #{(lvl/cell-key 1 0 0)}]
     (let [hit (lvl/map-trace cells [0.0 0.0 0.0] [100.0 0.0 0.0])]
       (assert (some? hit) "blocked path -> hit point, not nil")
       ;; steps: (16,0,0)->cell0 empty; (32,0,0)->cell1 SOLID. hit=[32,0,0].
@@ -643,7 +796,7 @@
       (assert (approx= (nth hit 1) 0.0) "hit y preserved")
       (assert (approx= (nth hit 2) 0.0) "hit z preserved")))
   ;; map-trace: solid cell just past the endpoint is NOT hit (steps = len/16).
-  (let [cells #{[3 0 0]}]                                ; cell(3,0,0)=world x[96,128)
+  (let [cells #{(lvl/cell-key 3 0 0)}]                                ; cell(3,0,0)=world x[96,128)
     (assert (nil? (lvl/map-trace cells [0.0 0.0 0.0] [80.0 0.0 0.0]))
             "solid past endpoint not sampled (len/16 steps)"))
   ;; map-trace: coincident points -> nil (no steps, no obstruction).
@@ -661,12 +814,12 @@
       (assert (< (Math/abs (- (:angle v) (- (/ Math/PI 2)))) 0.01) "angle = -pi/2 (player due -X)")
       (assert (true? (:can-see v)) "clear LOS -> can-see true"))
     ;; wall cell between enemy(+X) and player blocks LOS.
-    (let [wall #{[1 0 0]}                               ; cell x[32,64), sits between 0 and 100
+    (let [wall #{(lvl/cell-key 1 0 0)}                               ; cell x[32,64), sits between 0 and 100
           v (ent/enemy-view wall [0.0 0.0 0.0] {:pos [100.0 0.0 0.0]})]
       (assert (false? (:can-see v)) "wall between -> can-see false")
       (assert (approx= (:dist v) 100.0) "dist unaffected by LOS"))
     ;; a wall NOT on the segment does not block.
-    (let [off #{[0 0 5]}]                                ; far off the line of sight
+    (let [off #{(lvl/cell-key 0 0 5)}]                                ; far off the line of sight
       (assert (true? (:can-see (ent/enemy-view off [0.0 0.0 0.0] {:pos [100.0 0.0 0.0]})))
               "off-path wall does not block")))
   (println "enemy view: dist/angle/can-see over cells + player ok")
@@ -797,7 +950,7 @@
             "hitscan: off-axis grunt + no wall -> miss"))
   ;; hitscan: a wall cell on the z-axis (cz=3 ~ world z=96) occludes the grunt.
   (let [g (ent/make-grunt [0.0 0.0 200.0] 0.0 0)
-        h (wpn/hitscan #{[0 0 3]} [0.0 0.0 0.0] [0.0 0.0 1.0] [g])]
+        h (wpn/hitscan #{(lvl/cell-key 0 0 3)} [0.0 0.0 0.0] [0.0 0.0 1.0] [g])]
     (assert (= :wall (:kind h)) "hitscan: wall cell occludes grunt")
     (assert (approx= 96.0 (:dist h)) "hitscan: wall hit at z=96"))
   ;; fire-shot: a 40hp grunt dies in two shells (24,24 -> 16, then -8); dead culled.
@@ -931,5 +1084,140 @@
       (assert (approx= 144.0 (double (count idle)))  (str "idle = 4 quads = 144 floats; got " (count idle)))
       (assert (approx= 180.0 (double (count flash))) (str "flash = 5 quads = 180 floats; got " (count flash)))))
   (println "overlay: hud-bar / particle-box / viewmodel vert counts ok")
+
+  ;; --- #65/#74 HUD: ammo readout (faithful GL analog of q1k3's ∞ text) -------
+  ;; q1k3 draws the active weapon's ammo as DOM text — `weapon._needs_ammo ?
+  ;; weapon._ammo : '∞'`. The shotgun is needs-ammo=0, so it shows ∞. The fps-demo
+  ;; overlay has no text renderer (flat shader is pos3+color3, no glyph atlas), so
+  ;; the faithful analog draws ∞ procedurally: two ring outlines (one quad strip
+  ;; per ring) — drawable with the existing flat shader, no new asset. Only the
+  ;; shotgun exists in the port, so ammo is always ∞; the function draws the glyph.
+  (let [v  (ov/ammo-verts [400.0 200.0])
+        n  (count v)
+        xs (map v (range 0 n 6))
+        ys (map v (range 1 n 6))]
+    (assert (pos? n) "ammo glyph draws geometry")
+    (assert (zero? (rem n 6)) "ammo verts are flat (6 floats/vertex)")
+    (assert (every? #(instance? Number %) v) "ammo verts are a flat float vector")
+    (let [xmin (apply min xs) xmax (apply max xs)
+          ymin (apply min ys) ymax (apply max ys)
+          cx (/ (+ xmin xmax) 2.0) cy (/ (+ ymin ymax) 2.0)
+          half-w (/ (- xmax xmin) 2.0) half-h (/ (- ymax ymin) 2.0)
+          r ov/ammo-radius t ov/ammo-thickness]
+      (assert (approx= cx 400.0) "glyph centered at requested cx")
+      (assert (approx= cy 200.0) "glyph centered at requested cy")
+      (assert (> half-w half-h) "glyph wider than tall (two rings side by side)")
+      (assert (approx= half-w (+ (* 2.0 r) (/ t 2.0))) "glyph half-width = 2r + t/2")
+      (assert (approx= half-h (+ r (/ t 2.0))) "glyph half-height = r + t/2")))
+  (println "overlay: ammo infinity glyph (procedural, no text renderer) ok")
+
+  ;; --- ttt texture DSL interpreter (issue #17) ---------------------------------
+  ;; fps-demo.texture interprets q1k3's packed texture definitions into flat RGBA
+  ;; byte buffers. Colours pack 16-bit RGBA4: r,g,b = nibble*17, a = nibble*17
+  ;; (q1k3 uses nibble/15 as a float alpha; for RGBA8 bytes that's nibble*17). The
+  ;; emboss op draws the top colour at (-1,-1), bottom at (+1,+1), fill centred;
+  ;; an alpha-0 colour paints nothing (source-over). All pure + GL-free.
+  ;; bg fill: a 2x2 opaque red (0xF00F) decodes to four [255 0 0 255] pixels.
+  (let [t  (ttt/decode-texture [2 2 61455] [] (fn [] 0.0))
+        px (:pixels t)]
+    (assert (= 2 (:w t))   "texture width from header")
+    (assert (= 16 (count px)) "2x2x4 = 16 byte values")
+    (assert (= [255 0 0 255] [(aget px 0) (aget px 1) (aget px 2) (aget px 3)]) "opaque-red bg"))
+  ;; rect op (0): top/bottom = 0 (alpha 0, no-op) so only the green fill lands in
+  ;; the rect interior; the opaque-black bg stays outside.
+  (let [t  (ttt/decode-texture [4 4 15  0 1 1 2 2 0 0 3855] [] (fn [] 0.0))
+        px (:pixels t)
+        at (fn [x y] (let [o (* (+ (* y 4) x) 4)] [(aget px o) (aget px (inc o)) (aget px (+ o 2)) (aget px (+ o 3))]))]
+    (assert (= [0 0 0 255]   (at 0 0)) "bg outside rect stays black")
+    (assert (= [0 255 0 255] (at 1 1)) "rect fill is green")
+    (assert (= [0 255 0 255] (at 2 2)) "rect fill corner")
+    (assert (= [0 0 0 255]   (at 3 3)) "bg outside rect stays black"))
+  ;; draw-prev op (4): a 2x2 texture that blits texture 0 (opaque red) over its
+  ;; black bg ends up fully red — exercises decode-all's ordered accumulator, the
+  ;; nearest-neighbour blit, and source-over alpha.
+  (let [ts (ttt/decode-all [[2 2 61455]
+                            [2 2 15  4 0 0 0 2 2 15]]
+                           (fn [] 0.0))
+        px (:pixels (nth ts 1))]
+    (assert (= 2 (count ts)) "decode-all returns one map per definition")
+    (assert (= [255 0 0 255] [(aget px 0) (aget px 1) (aget px 2) (aget px 3)]) "draw-prev blits red over black"))
+  (println "texture: ttt bg/rect/draw-prev decode ok")
+
+  ;; Decode all 31 real q1k3 texture definitions (textures/data) — a smoke test
+  ;; that exercises every op (0 rect/emboss, 1 rect-multiple, 2 noise, 3 text
+  ;; skip, 4 draw-prev incl. scaled blits like tex1's 64x512 stretch) on real
+  ;; data without throwing, and that each buffer is exactly w*h*4 bytes.
+  ;; rng=0.5 so noise actually lands non-trivial alpha.
+  (let [ts  (ttt/decode-all textures/data (fn [] 0.5))
+        bad (filter (fn [t] (not= (count (:pixels t)) (* (:w t) (:h t) 4))) ts)]
+    (assert (= 31 (count ts)) (str "31 q1k3 textures; got " (count ts)))
+    (assert (empty? bad) "every texture buffer is w*h*4 bytes")
+    (assert (= [64 64] ((juxt :w :h) (nth ts 0)))  "tex0 is 64x64 stone")
+    (assert (= [32 32] ((juxt :w :h) (nth ts 4)))  "tex4 is 32x32")
+    (assert (= [32 32] ((juxt :w :h) (nth ts 30))) "tex30 is 32x32")
+    ;; the index map in textures.clj claims two size classes only.
+    (assert (= #{[64 64] [32 32]} (set (map (juxt :w :h) ts)))
+            "textures are 64x64 or 32x32"))
+  (println "texture: all 31 q1k3 defs decode (ops 0-4, scaled draw-prev) ok")
+
+  ;; --- startup guard: app namespaces load + bulk texture upload round-trips -----
+  ;; The GUI loop itself can't run without a display, but two things are
+  ;; headlessly checkable and BOTH must hold or `-M:run` shows no window:
+  ;;   (1) glimmer.core + fps-demo.core LOAD (a load throw aborts -main before
+  ;;       any window appears). The runtime `require :as` alias is NOT visible to
+  ;;       the compiler at the call site, so we resolve the app fn via its
+  ;;       namespace var rather than a bare `core/app` symbol.
+  ;;   (2) the texture-array upload primitive (byte-array -> ffi/write-array,
+  ;;       replacing a 508K-call per-byte ffi/write loop that froze realize!)
+  ;;       round-trips the bytes intact.
+  (try
+    (require '[glimmer.core])
+    (require '[fps-demo.core])
+     (let [app-fn (deref (find-var 'fps-demo.core/app))
+           tree   (app-fn)]
+       ;; app root is a bare :gl-area. The old controls row (a sensitivity
+       ;; :scale + invert :checkbutton above the pane) was removed: it stole
+       ;; keyboard focus and swallowed the arrow keys. With only the area as
+       ;; root, the toplevel window's EventControllerKey gets them and the area
+       ;; fills the whole window.
+       (assert (= (first tree) :gl-area) "app root is a :gl-area (no controls row)")
+       (let [gl-props (second tree)]
+         (assert (true? (:hexpand gl-props)) "gl-area expands to fill the window")
+         (assert (true? (:vexpand gl-props)) "gl-area expands vertically")
+         (assert (:on-button gl-props) "gl-area carries :on-button (cursor-lock entry)")
+         (assert (:on-key gl-props) "gl-area carries :on-key (Escape unlock)")))
+     (println "startup: glimer.core + fps-demo.core load; app tree is [:gl-area] ok")
+    (catch Exception e
+      (println "startup: FAILED —")
+      (println "  msg:" (ex-message e))
+      (loop [ex e depth 0]
+        (when (and ex (< depth 5))
+          (println "  [" depth "] " (.getName (class ex)) ":" (.getMessage ex))
+          (recur (.getCause ex) (inc depth))))
+      (assert false "startup guard: app namespaces must load")))
+
+  ;; --- mouse-capture ns loads + delta reads (CoreGraphics defcfn resolved) ---
+  ;; capture/delta calls CGGetLastMouseDelta, a benign query (no dissociation),
+  ;; so it's safe in the headless shell and proves the defcfn bindings resolved.
+  (require '[fps-demo.capture :as capture])
+  (let [[dx dy] (capture/delta)]
+    (assert (and (number? dx) (number? dy)) "capture/delta returns a [dx dy] pair"))
+  (println "capture: CoreGraphics bindings resolved; delta reads [dx dy] ok")
+
+  ;; bulk texture-upload primitive: build a 508K byte buffer, write-array it to
+  ;; native memory in one call, read it back, confirm bytes are intact. This is
+  ;; the primitive make-texture-atlas now depends on (was a per-byte loop).
+  (let [n   (* 31 64 64 4)                       ; same size as the real texture blob
+        src (vec (for [i (range n)] (mod i 251))) ; deterministic 0-250 byte values
+        ba  (byte-array (map int src))
+        ptr (ffi/alloc n)]
+    (ffi/write-array ptr ba)
+    (let [back (vec (ffi/read-array ptr n))]
+      (ffi/free ptr)
+      (assert (= (count back) n) "read-array returns every byte written")
+      (assert (= back src) "write-array/read-array round-trip is byte-exact")
+      (assert (zero? (nth back 0)) "first byte is 0")
+      (assert (= 250 (nth back 250)) "offset 250 holds 250")))
+  (println "startup: byte-array -> write-array -> read-array round-trip ok (508K)")
 
   (println "check: ok"))

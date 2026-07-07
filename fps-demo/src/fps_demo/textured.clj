@@ -32,11 +32,12 @@
    [0 2 3 1  0.0  0.0 -1.0]]) ; -Z
 
 (defn- quad
-  "Two triangles (6 verts, 8 floats each) for one face: the 4 CCW corner indices,
-  the face normal, and the texture tile count. UVs run [0..tile] across the face."
-  [c i0 i1 i2 i3 nx ny nz tile]
+  "Two triangles (6 verts, 9 floats each) for one face: the 4 CCW corner indices,
+  the face normal, the texture tile count, and the texture-array layer index.
+  UVs run [0..tile] across the face."
+  [c i0 i1 i2 i3 nx ny nz tile tex-index]
   (let [p0 (c i0) p1 (c i1) p2 (c i2) p3 (c i3)
-        emit (fn [[x y z] u v] [x y z u v nx ny nz])]
+        emit (fn [[x y z] u v] [x y z u v nx ny nz tex-index])]
     (concat
      (emit p0 0.0   0.0)
      (emit p1 tile  0.0)
@@ -46,13 +47,15 @@
      (emit p3 0.0   tile))))
 
 (defn box
-  "Textured axis-aligned box. Returns {:data [...floats] :count 36 :stride 8}.
-  Six faces tessellated to 36 vertices; each vertex is [x y z u v nx ny nz].
-  `tile` is how many times the texture repeats across each face edge."
-  [[ox oy oz] [sx sy sz] tile]
+  "Textured axis-aligned box. Returns {:data [...floats] :count 36 :stride 9}.
+  Six faces tessellated to 36 vertices; each vertex is
+  [x y z u v nx ny nz tex-index]. `tile` is how many times the texture repeats
+  across each face edge; `tex-index` selects the texture-array layer for every
+  face of this box."
+  [[ox oy oz] [sx sy sz] tile tex-index]
   (let [c (corners ox oy oz sx sy sz)
         data (->> faces
                   (mapcat (fn [[i0 i1 i2 i3 nx ny nz]]
-                            (quad c i0 i1 i2 i3 nx ny nz tile)))
+                            (quad c i0 i1 i2 i3 nx ny nz tile tex-index)))
                   vec)]
-    {:data data :count 36 :stride 8}))
+    {:data data :count 36 :stride 9}))

@@ -27,17 +27,20 @@
    :uniforms
    {:u_mvp        :mat4
     :u_model      :mat4
-    :u_tex        :sampler2D
+     :u_tex          :sampler2D
+     :u_num_textures [:float 31.0]
     :u_ambient    [:vec3 [0.18 0.18 0.22]]
     :u_light_pos  [:vec3 [0.0 3.0 0.0]]
     :u_light_col  [:vec3 [1.0 0.85 0.6]]
     :u_light_dist [:float 8.0]}
    :attribs
-   {:a_pos    [:vec3 0]
-    :a_uv     [:vec2 1]
-    :a_normal [:vec3 2]}
+   {:a_pos       [:vec3 0]
+    :a_uv        [:vec2 1]
+    :a_normal    [:vec3 2]
+    :a_tex_index [:float 3]}
    :varying
    {:v_uv        :vec2
+    :v_tex_index :float
     :v_normal    :vec3
     :v_world_pos :vec3}
    :fs-out {:frag_color :vec4}
@@ -45,9 +48,13 @@
    [[:set :v_world_pos [:. [:* :u_model [:vec4 :a_pos 1.0]] :xyz]]
     [:set :v_normal    [:* [:mat3 :u_model] :a_normal]]
     [:set :v_uv        :a_uv]
+    [:set :v_tex_index :a_tex_index]
     [:set :gl_Position [:* :u_mvp [:vec4 :a_pos 1.0]]]]
    :fs-main
-   [[:let :tex      :vec4 [:texture :u_tex :v_uv]]
+   [[:let :tex      :vec4 [:texture :u_tex
+                           [:vec2 [:. :v_uv :x]
+                                  [:/ [:+ :v_tex_index [:fract [:. :v_uv :y]]]
+                                   :u_num_textures]]]]
     [:let :to_light :vec3 [:- :u_light_pos :v_world_pos]]
     [:let :dist     :float [:length :to_light]]
     [:let :dir      :vec3 [:/ :to_light [:max :dist 0.0001]]]

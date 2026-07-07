@@ -7,7 +7,7 @@
   set from fps-demo.map. Run with `joltc -M:run`; smoke-test headlessly with
   `FPS_DEMO_AUTO_QUIT_MS=3000 joltc -M:run`."
   (:require [glimmer.core   :as ui]
-            [glimmer-gl.gtk]
+            [glimmer-gl.gtk :as ggtk]
             [fps-demo.render :as render]
             [fps-demo.player :as player]
             [fps-demo.map    :as lvl]
@@ -15,6 +15,7 @@
              [fps-demo.weapon :as wpn]
              [fps-demo.particle :as part]
              [fps-demo.pickup :as pkup]
+             [fps-demo.capture :as capture]
              [fps-demo.maps.l :as lvl-data]))
 
 (def ^:private ^:const tick 0.016666667)   ; fixed 1/60 s per frame (q1k3 fixed-step)
@@ -38,25 +39,34 @@
 
 (def ^:private eye-offset (nth player/half 1))   ; eye sits half-height above center
 
-;; Initial grunts: one ahead of the spawn so combat is observable. Positioned in
-;; world units (same frame as the player :p), on the ground. yaw 0 = +Z forward.
+;; Initial enemies: spawned from the real q1k3 map entities (m1) via
+;; ent/spawn-from-entities — every grunt/enforcer/ogre/zombie the level declares,
+;; at its world position with its patrol direction. Falls back to a single grunt
+;; ahead of the player if the map declares none (keeps combat observable).
 (defn- spawn-grunts []
-  [(ent/make-grunt [(+ (nth spawn-eye 0) 200.0)
-                    (nth spawn-eye 1)
-                    (+ (nth spawn-eye 2) 0.0)]
-                   0.0 0)])
+  (let [ents (:entities (first (lvl/decode-container lvl-data/bytes)))
+        spawned (ent/spawn-from-entities ents)]
+    (if (seq spawned)
+      spawned
+      [(ent/make-grunt [(+ (nth spawn-eye 0) 200.0)
+                        (nth spawn-eye 1)
+                        (nth spawn-eye 2)]
+                       0.0 0)])))
 
 (def ^:private game (atom {:p       [(nth spawn-eye 0) (- (nth spawn-eye 1) eye-offset) (nth spawn-eye 2)]
                            :v       [0.0 0.0 0.0]
                            :a       [0.0 0.0 0.0]
                            :f       10
                            :on-ground false
-                           :yaw     0.0
-                           :pitch   0.0
-                            :keys    (or (held-seed) #{})
+                            :yaw     0.0
+                            :pitch   0.0
+                            :mouse-sens   player/mouse-sens
+                            :mouse-invert false
+                             :keys    (or (held-seed) #{})
                             :last-x  nil
                             :last-y  nil
                             :fire-request false
+                            :cursor-locked? false
                             :health  player/player-max-health
                             :dead?   false
                             :death-time nil
@@ -77,7 +87,15 @@
    0x64 :right   0x44 :right                                 ; d D
    0x20 :space})
 
-(defn- on-key [_area keyval pressed?]
+(def ^:const escape-keyval 65307)   ; GDK_KEY_Escape
+
+(defn- on-key [area keyval pressed?]
+  ;; Escape unlocks the pointer (restores the cursor). q1k3 exits pointer lock
+  ;; on Esc; here it's the blank-cursor lock only (GTK4 has no warp, see #66).
+  (when (and pressed? (= (int keyval) escape-keyval))
+    (swap! game assoc :cursor-locked? false :last-x nil :last-y nil)
+    (ggtk/show-cursor! area)
+    (capture/exit!))
   (when-let [kw (keyval-kw (int keyval))]
     (if (= :space kw)
       ;; edge-triggered jump: only on press, only from the ground
@@ -90,24 +108,33 @@
                     (let [ks (if pressed? (conj (:keys g) kw) (disj (:keys g) kw))]
                       (assoc g :keys ks)))))))
 
-(defn- on-button [_area _btn pressed? _x _y]
-  ;; Left button press edge-triggers one shotgun shell (cleared by on-tick);
-  ;; release just drops the held-down marker.
+(defn- on-button [area _btn pressed? _x _y]
+  ;; First click locks the pointer (hides the cursor); left button also
+  ;; edge-triggers one shotgun shell (cleared by on-tick).
   (swap! game assoc :lmb-down pressed?)
+  (when (and pressed? (not (:cursor-locked? @game)))
+    (swap! game assoc :cursor-locked? true)
+    (ggtk/hide-cursor! area)
+    (capture/enter!)
+    (capture/delta))                        ; flush any pre-capture accumulator
   (when pressed?
     (swap! game (fn [g] (assoc g :fire-request true :fire-time (:time g))))))
 
 (defn- on-motion [_area x y]
-  ;; Always look (drag-to-look dropped in favor of left-click-to-fire): the
-  ;; first motion seeds the anchor, subsequent ones yaw/pitch by the delta.
-  (swap! game
-         (fn [g]
-           (let [lx (:last-x g) ly (:last-y g)]
-             (if (or (nil? lx) (nil? ly))
-               (assoc g :last-x x :last-y y)
-               (let [dx (- x lx) dy (- y ly)
-                     [yaw' pitch'] (player/look (:yaw g) (:pitch g) dx (- dy))]
-                 (assoc g :yaw yaw' :pitch pitch' :last-x x :last-y y)))))))
+  ;; While the pointer is captured, look is driven by CoreGraphics deltas in
+  ;; on-tick (GDK motion goes quiet once the cursor is dissociated), so
+  ;; drag-to-look only runs when NOT locked — the free-cursor fallback.
+  (when-not (:cursor-locked? @game)
+    (swap! game
+           (fn [g]
+             (let [lx (:last-x g) ly (:last-y g)]
+               (if (or (nil? lx) (nil? ly))
+                 (assoc g :last-x x :last-y y)
+                 (let [dx (- x lx) dy (- y ly)
+                       [yaw' pitch'] (player/look (:yaw g) (:pitch g) dx dy
+                                                   {:sens (:mouse-sens g)
+                                                    :invert (:mouse-invert g)})]
+                   (assoc g :yaw yaw' :pitch pitch' :last-x x :last-y y))))))))
 
 (defn- on-tick [_area]
   ;; Per-frame update. A dead player is frozen (q1k3 player/_kill) and re-spawns
@@ -130,7 +157,12 @@
              (let [intent   (zipmap [:forward :back :left :right]
                                     (map #(if ((:keys g) %) 1 0) [:forward :back :left :right]))
                    grounded (:on-ground g)
-                   a        (player/wish-accel intent (:yaw g) grounded)
+                   [mdx mdy]     (if (:cursor-locked? g) (capture/delta) [0.0 0.0])
+                   [yaw' pitch'] (if (:cursor-locked? g)
+                                   (player/look (:yaw g) (:pitch g) mdx mdy
+                                                {:sens (:mouse-sens g) :invert (:mouse-invert g)})
+                                   [(:yaw g) (:pitch g)])
+                   a        (player/wish-accel intent yaw' grounded)
                    phys     (player/step-physics
                               cells
                               {:p (:p g) :v (:v g) :a a :f (if grounded 10 2.5)
@@ -140,6 +172,7 @@
                    [enemies dmg] (ent/step-enemies cells (:p phys) (:enemies g)
                                                    time' tick (fn [] (Math/random)))
                    p0       (-> g
+                                (assoc :yaw yaw' :pitch pitch')
                                 (assoc :p (:p phys) :v (:v phys) :a a
                                        :on-ground (:on-ground phys)
                                        :time time'
@@ -151,7 +184,7 @@
                                 (let [eye [(nth (:p phys) 0)
                                            (+ (nth (:p phys) 1) eye-offset)
                                            (nth (:p phys) 2)]
-                                      dir (player/forward (:yaw p0) (:pitch p0))
+                                      dir (player/forward yaw' pitch')
                                       [en' hit] (wpn/fire-shot cells eye dir (:enemies p0)
                                                                time' (fn [] (Math/random)))]
                                   [(assoc p0 :enemies en' :fire-request false)
@@ -177,7 +210,15 @@
                               p5)]
                p6)))))
 
-(defn- realize! [_area]
+(defn- realize! [area]
+  ;; The "realize" signal does NOT make the GL context current (only "render"
+  ;; does) — so init!'s GL calls (texture upload, shader compile) must run AFTER
+  ;; make-current, or they hit a void context on macOS and build broken objects
+  ;; (texture "unloadable", invalid enum, invalid framebuffer op each frame).
+  ;; gl_demo's on-realize does the same; this is what makes it work on macOS.
+  (ggtk/make-current area)
+  (when-let [err (ggtk/gl-area-error-message area)]
+    (binding [*out* *err*] (println "[fps-demo] GLArea context error:" err)))
   (reset! render-state (render/init!))
   (binding [*out* *err*] (println "[fps-demo] GL realized; spawn eye:" spawn-eye)))
 
@@ -210,7 +251,12 @@
           (throw e))))))
 
 (defn app []
-  [:gl-area {:on-realize realize!
+  ;; Just the GLArea — no controls row. A [:scale] above the pane was grabbing
+  ;; keyboard focus and swallowing the arrow keys; with only the area as the
+  ;; root widget, the EventControllerKey on the toplevel window gets them (and
+  ;; the area fills the whole window).
+  [:gl-area {:hexpand true :vexpand true :halign :fill :valign :fill
+             :on-realize realize!
              :on-resize  resize!
              :on-render  render!
              :on-tick    on-tick

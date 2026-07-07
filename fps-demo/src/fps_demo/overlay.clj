@@ -97,6 +97,56 @@
                (quad  970.0 80.0 1180.0 98.0 0.1 gun-gray)
                ;; pump grip
                (quad  980.0 50.0 1040.0 82.0 0.1 gun-gray)]
-        base   (reduce into [] quads)
-        muzzle (quad 1175.0 78.0 1215.0 100.0 0.2 [1.0 0.85 0.30])]
+         base   (reduce into [] quads)
+         muzzle (quad 1175.0 78.0 1215.0 100.0 0.2 [1.0 0.85 0.30])]
     (if flash? (into base muzzle) base)))
+
+;; --- ammo readout (#65): procedural infinity glyph --------------------------
+;; q1k3 shows the active weapon's ammo as DOM text — `∞` for the shotgun
+;; (needs-ammo=0). The overlay has no text renderer, so the GL analog draws ∞ as
+;; two touching ring outlines, each a strip of rotated quads. Only the shotgun
+;; exists in the port, so ammo is always ∞. Drawn in screen px under the ortho
+;; flat shader alongside the health bar + viewmodel.
+
+(def ^:const ammo-radius    14.0)   ; px radius of each ring
+(def ^:const ammo-thickness  4.0)   ; px stroke thickness
+(def ^:const ammo-segs      12)     ; quad segments per ring
+
+(defn- quad4
+  "Two-triangle quad from four arbitrary [x y] corners (order: 0,1,2 + 0,2,3) at
+  depth z, colored [r g b]. Returns 6 verts × 6 floats (36 floats)."
+  [p0 p1 p2 p3 z [r g b]]
+  (let [[x0 y0] p0 [x1 y1] p1 [x2 y2] p2 [x3 y3] p3]
+    [x0 y0 z r g b
+     x1 y1 z r g b
+     x2 y2 z r g b
+     x0 y0 z r g b
+     x2 y2 z r g b
+     x3 y3 z r g b]))
+
+(defn- ring-verts
+  "A ring outline of radius `r`, stroke `t`, centered at (ox, oy), as `segs`
+  rotated quad segments. Returns a flat [x y z r g b ...] float vector."
+  [ox oy r t segs z col]
+  (let [ir (- r (/ t 2.0)) or (+ r (/ t 2.0))
+        two-pi (* 2.0 Math/PI)]
+    (loop [i 0 acc []]
+      (if (>= i segs) acc
+          (let [a0 (* two-pi (/ (double i) (double segs)))
+                a1 (* two-pi (/ (double (inc i)) (double segs)))
+                c0 (Math/cos a0) s0 (Math/sin a0)
+                c1 (Math/cos a1) s1 (Math/sin a1)
+                p0 [(+ ox (* ir c0)) (+ oy (* ir s0))]
+                p1 [(+ ox (* or c0)) (+ oy (* or s0))]
+                p2 [(+ ox (* or c1)) (+ oy (* or s1))]
+                p3 [(+ ox (* ir c1)) (+ oy (* ir s1))]]
+            (recur (inc i) (into acc (quad4 p0 p1 p2 p3 z col))))))))
+
+(defn ammo-verts
+  "Procedural infinity (∞) glyph centered at [cx cy] (screen px), the GL analog
+  of q1k3's `∞` ammo text for the infinite-ammo shotgun. Two touching rings. Flat
+  [x y z r g b ...] float vector."
+  [[cx cy]]
+  (let [col [0.85 0.85 0.85] z 0.1]
+    (-> (ring-verts (- cx ammo-radius) cy ammo-radius ammo-thickness ammo-segs z col)
+        (into (ring-verts (+ cx ammo-radius) cy ammo-radius ammo-thickness ammo-segs z col)))))

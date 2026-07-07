@@ -8,7 +8,8 @@
   Euler with per-axis friction, substepped to <=16 units/step, with per-axis AABB
   rollback + stair-stepping — exactly q1k3's _update_physics.
 
-  No atan2/hypot (jolt doesn't bridge them); length uses Math/sqrt.")
+  No atan2/hypot (jolt doesn't bridge them); length uses Math/sqrt."
+  (:require [fps-demo.map :as lvl]))
 
 (def ^:const gravity      -1200.0)   ; a.y = gravity * _gravity-factor (player = 1)
 (def ^:const substep-size 16.0)      ; max units moved per collision substep
@@ -66,11 +67,11 @@
         y0 (floor-div (nth minv 1) 16) y1 (floor-div (nth maxv 1) 16)
         z0 (floor-div (nth minv 2) 32) z1 (floor-div (nth maxv 2) 32)]
     (boolean
-      (some (fn [cell] (contains? cells cell))
+      (some (fn [k] (contains? cells k))
             (for [cx (range x0 (inc x1))
                   cy (range y0 (inc y1))
                   cz (range z0 (inc z1))]
-              [cx cy cz])))))
+              (lvl/cell-key cx cy cz))))))
 
 (defn- collides?
   "True if the box centered at point p (half-extents h) hits any solid cell."
@@ -158,14 +159,17 @@
 
 (defn look
   "Apply one frame of mouse delta to [yaw pitch]. Returns [yaw' pitch']. Yaw
-  wraps mod 2pi; pitch clamps to [-pitch-limit, pitch-limit]. `my-sign` flips
-  the Y axis for inverted-mouse (q1k3: inverted checkbox negates the factor)."
+  wraps mod 2pi; pitch clamps to [-pitch-limit, pitch-limit]. `opts` (a map,
+  may be nil) carries :sens (one sensitivity for both axes, default mouse-sens —
+  q1k3 uses a single _mouse_sensitivity) and :invert (flip the Y axis)."
   ([yaw pitch mx my]
-   (look yaw pitch mx my 0.00015))
-  ([yaw pitch mx my my-factor]
-   (let [yaw'   (mod (+ yaw (* mx mouse-sens)) (* 2.0 Math/PI))
+   (look yaw pitch mx my nil))
+  ([yaw pitch mx my opts]
+   (let [s  (double (get opts :sens mouse-sens))
+         yf (if (get opts :invert) (- s) s)
+         yaw'   (mod (+ yaw (* (double mx) s)) (* 2.0 Math/PI))
          pitch' (max (- pitch-limit)
-                     (min pitch-limit (+ pitch (* my my-factor))))]
+                     (min pitch-limit (+ pitch (* (double my) yf))))]
      [yaw' pitch'])))
 
 ;; --- movement acceleration from key state (entity_player _update) ----------

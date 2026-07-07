@@ -79,30 +79,59 @@
             [entities i]   (parse-entities data i nent)]
         (recur i (conj acc {:blocks blocks :entities entities}))))))
 
-(defn solid-cells
-  "Set of [x y z] grid cells occupied by `blocks` — the collision map. Each
-  block fills the full [x,x+sx) x [y,y+sy) x [z,z+sz) grid box. Equivalent to
-  q1k3's collision bitmap, expressed as a pure set for clarity."
-  [blocks]
-  (into #{}
-        (mapcat (fn [b]
-                  (let [{:keys [x y z sx sy sz]} b]
-                    (for [cz (range z (+ z sz))
-                          cy (range y (+ y sy))
-                          cx (range x (+ x sx))]
-                      [cx cy cz])))
-                blocks)))
+(defn cell-key
+  "Pack a collision-grid cell (cx,cy,cz) into one long so the solid-cell set
+  hashes/compares a primitive rather than a 3-vector (far cheaper to build and
+  query). Grid is 128^3 (cell coords 0..127); the 0xFF mask keeps out-of-level
+  queries (negative or >=128) from aliasing real cells."
+  [cx cy cz]
+  (bit-or (bit-shift-left (bit-and (int cx) 255) 16)
+          (bit-shift-left (bit-and (int cy) 255) 8)
+          (bit-and (int cz) 255)))
 
-;; --- collision / line-of-sight queries (q1k3 map.js) ------------------------
-;; Cells are 32x16x32 (x>>5, y>>4, z>>5). block-at? maps a world point to its
-;; cell and tests membership in the solid-cells set.
+(defn cell-key
+  "Pack a collision-grid cell (cx,cy,cz) into one long so the solid-cell set
+  hashes/compares a primitive rather than a 3-vector (far cheaper to build and
+  query). Grid is 128^3 (cell coords 0..127); the 0xFF mask keeps out-of-level
+  queries (negative or >=128) from aliasing real cells."
+  [cx cy cz]
+  (bit-or (bit-shift-left (bit-and (int cx) 255) 16)
+          (bit-shift-left (bit-and (int cy) 255) 8)
+          (bit-and (int cz) 255)))
+
+(defn solid-cells
+  "Set of packed cell-keys (see cell-key) occupied by `blocks` -- the collision
+  map. Each block fills the full [x,x+sx) x [y,y+sy) x [z,z+sz) grid box. Built
+  with a transient set in tight loops (no per-cell vector allocation, no lazy
+  seq); the old (into #{} (mapcat ...)) allocated a 3-vector per cell."
+  [blocks]
+  (persistent!
+    (loop [bs blocks acc (transient #{})]
+      (if (empty? bs)
+        acc
+        (let [{:keys [x y z sx sy sz]} (first bs)
+              x1 (+ x sx) y1 (+ y sy) z1 (+ z sz)]
+          (recur (next bs)
+                 (loop [cz z acc acc]
+                   (if (>= cz z1)
+                     acc
+                     (recur (inc cz)
+                            (loop [cy y acc acc]
+                              (if (>= cy y1)
+                                acc
+                                (recur (inc cy)
+                                       (loop [cx x acc acc]
+                                         (if (>= cx x1)
+                                           acc
+                                           (recur (inc cx)
+                                                  (conj! acc (cell-key cx cy cz)))))))))))))))))
 (defn block-at?
   "True if the grid cell containing world point (wx,wy,wz) is in `cells`."
   [cells wx wy wz]
   (let [cx (int (Math/floor (/ wx 32.0)))
         cy (int (Math/floor (/ wy 16.0)))
         cz (int (Math/floor (/ wz 32.0)))]
-    (contains? cells [cx cy cz])))
+    (contains? cells (cell-key cx cy cz))))
 
 (defn map-trace
   "Ray-march from `a` to `b` in 16-unit steps; returns the world-space hit point

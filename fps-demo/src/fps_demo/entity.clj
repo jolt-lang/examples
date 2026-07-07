@@ -32,6 +32,73 @@
    :attack-aim     {:anim 0 :speed 0.0 :duration 0.1 :next :attack-prepare}
    :evade          {:anim 2 :speed 1.0 :duration 0.8 :next :attack-aim}})
 
+;; --- per-type overrides (q1k3 entity_enemy_{grunt,enforcer,ogre,zombie}) ------
+;; Each enemy type extends the base with its own stats, and ogre/zombie override
+;; the anim + state tables (slower cadence / stationary follow). type-specs maps a
+;; type keyword to the fields merged over a base enemy; the FSM reads these from
+;; the enemy map rather than the module globals.
+(def ogre-anims
+  [[1.0  [0]]          ; 0 idle
+   [0.80 [1 2 3 4]]    ; 1 walk
+   [0.40 [1 2 3 4]]    ; 2 run
+   [0.35 [0 5 5 5]]    ; 3 attack prepare
+   [0.35 [5 0 0 0]]])  ; 4 attack exec
+
+(def zombie-anims
+  [[1.0  [0]]          ; 0 idle
+   [0.40 [1 2 3 4]]    ; 1 walk
+   [0.20 [1 2 3 4]]    ; 2 run
+   [0.25 [0 0 5 5]]    ; 3 attack prepare  (zombie ANIMS[3] override)
+   [0.25 [5 0 0 0]]])  ; 4 attack exec
+
+(def hound-anims
+  [[1.0  [0]]                   ; 0 idle
+   [0.15 [0 1]]                 ; 1 walk (patrol stalk)
+   [0.15 [0 1]]                 ; 2 run
+   [1.0  [0]]                   ; 3 attack prepare
+   [0.1  [0 1 1 1 0 0 0]]])     ; 4 attack (lunge snap)
+
+;; zombie states: follow is stationary (anim idle, speed 0), recover lingers
+;; 1.1s before idling — a shambler, not a sprinter.
+(def zombie-states
+  (merge STATES
+         {:follow         {:anim 0 :speed 0.0 :duration 0.1}
+          :attack-recover {:anim 0 :speed 0.0 :duration 1.1 :next :idle}
+          :attack-exec    {:anim 4 :speed 0.0 :duration 0.4 :next :attack-recover}
+          :attack-prepare {:anim 3 :speed 0.0 :duration 0.4 :next :attack-exec}
+          :attack-aim     {:anim 0 :speed 0.0 :duration 0.1 :next :attack-prepare}
+          :evade          {:anim 0 :speed 0.0 :duration 0.1 :next :attack-aim}}))
+
+;; hound states (entity_enemy_hound): a fast melee lunge. aim/prepare are instant
+;; (0.0s), exec lasts 1s, recover 0.5s; patrol is a slow stalk (speed 0.2). The
+;; lunge itself (velocity impulse) is applied on entering :attack-exec by decide.
+(def hound-states
+  (merge STATES
+         {:patrol         {:anim 1 :speed 0.2 :duration 0.5}
+          :attack-recover {:anim 0 :speed 0.0 :duration 0.5 :next :follow}
+          :attack-exec    {:anim 4 :speed 0.0 :duration 1.0 :next :attack-recover}
+          :attack-prepare {:anim 3 :speed 0.0 :duration 0.0 :next :attack-exec}
+          :attack-aim     {:anim 0 :speed 0.0 :duration 0.0 :next :attack-prepare}
+          :evade          {:anim 2 :speed 1.0 :duration 0.3 :next :attack-aim}}))
+
+(def type-specs
+  "Per-type enemy overrides. :speed/:attack-distance feed the FSM; :anims/:states
+  replace the default tables; :damage-threshold makes the zombie ignore any hit
+  that isn't a gib (>threshold). :model/:texture are consumed by the renderer.
+  :melee?/:melee-damage mark the hound, whose attack is a velocity lunge that
+  deals damage on contact rather than firing a projectile (:fire-now)."
+  {:grunt    {:health 40.0  :texture 17 :model :grunt}
+   :enforcer {:health 80.0  :texture 19 :model :enforcer :half [14.0 44.0 14.0]}
+   :ogre     {:health 200.0 :texture 20 :model :ogre :half [14.0 36.0 14.0]
+              :speed 96.0 :attack-distance 350.0 :anims ogre-anims}
+   :zombie   {:health 60.0  :texture 18 :model :zombie
+              :speed 0.0 :attack-distance 350.0 :damage-threshold 60.0
+              :anims zombie-anims :states zombie-states}
+   :hound    {:health 25.0  :texture 22 :model :hound :half [12.0 16.0 12.0]
+              :speed 256.0 :attack-distance 200.0 :evade-distance 64.0
+              :attack-chance 0.7 :anims hound-anims :states hound-states
+              :melee? true :melee-damage 14.0}})
+
 ;; --- enemy defaults (entity_enemy._init) ------------------------------------
 (def ^:const enemy-half  [12.0 28.0 12.0])   ; AABB half-extents (player is 24 on Y)
 (def ^:const step-height 17.0)
@@ -84,11 +151,17 @@
 ;; Enemy state is a plain map (no mutation): step-enemy returns a new map each
 ;; tick. Mirrors entity_enemy.js: anim index + period/frames carried for the
 ;; renderer; state-update-at carries the q1k3 duration jitter.
-(defn- anim-for [idx] (nth ANIMS idx))
+;; anim-for indexes an anim table (base ANIMS by default; a type may override).
+(defn- anim-for [anims idx] (nth anims idx))
+
+;; Per-enemy table accessors: fall back to the module defaults when the enemy
+;; carries no override (base make-enemy, and pre-type-spec callers/tests).
+(defn- enemy-states [enemy] (or (:states enemy) STATES))
+(defn- enemy-anims  [enemy] (or (:anims enemy) ANIMS))
 
 (defn set-state [enemy state-key game-time rng]
-  (let [spec           (get STATES state-key)
-        [period frames] (anim-for (:anim spec))
+  (let [spec           (get (enemy-states enemy) state-key)
+        [period frames] (anim-for (enemy-anims enemy) (:anim spec))
         dur            (:duration spec)
         at             (+ game-time dur (* dur 0.25 (rng)))]
     (assoc enemy
@@ -103,7 +176,9 @@
     {:pos pos, :vel [0.0 0.0 0.0], :yaw yaw, :target-yaw yaw,
      :turn-bias 0.0, :state :idle,
      :health base-health, :on-ground true, :dead? false,
-     :speed enemy-speed, :half enemy-half, :step-height step-height}
+     :speed enemy-speed, :half enemy-half, :step-height step-height,
+     :wake-distance wake-distance, :attack-distance attack-distance,
+     :evade-distance evade-distance, :attack-chance attack-chance}
     :idle 0.0 (fn [] 0.0)))
 
 ;; --- FSM decision tick (entity_enemy._update, the if-tree) ------------------
@@ -113,14 +188,18 @@
 ;; precomputed by the caller: {:dist :angle :can-see} where can-see = clear LOS.
 (def ^:const half-pi 1.5707963267948966)
 
-(defn- state-speed [state-key]
-  (:speed (get STATES state-key)))
+(defn- state-speed [enemy state-key]
+  (:speed (get (enemy-states enemy) state-key)))
 
 (defn- decide [enemy dist angle can-see game-time rng]
-  (let [e1 (if (= (:state enemy) :follow)
+  (let [attack-dist (:attack-distance enemy)
+        evade-dist  (:evade-distance enemy)
+        wake-dist   (:wake-distance enemy)
+        chance      (:attack-chance enemy)
+        e1 (if (= (:state enemy) :follow)
              (let [e (if can-see (assoc enemy :target-yaw angle) enemy)]
-               (if (< dist attack-distance)
-                 (if (or (< dist evade-distance) (> (rng) attack-chance))
+               (if (< dist attack-dist)
+                 (if (or (< dist evade-dist) (> (rng) chance))
                    (let [e2 (set-state e :evade game-time rng)]
                      (assoc e2 :target-yaw (+ (:target-yaw e2) half-pi (* Math/PI (rng)))))
                    (set-state e :attack-aim game-time rng))
@@ -130,7 +209,7 @@
              (assoc e1 :target-yaw angle)
              e1)
         e3 (if (or (= (:state e2) :patrol) (= (:state e2) :idle))
-             (if (and (< dist wake-distance) can-see)
+             (if (and (< dist wake-dist) can-see)
                (set-state e2 :attack-aim game-time rng)
                e2)
              e2)
@@ -139,7 +218,14 @@
                (if (not can-see) (set-state e :evade game-time rng) e))
              e3)
         e5 (if (= (:state e4) :attack-exec)
-             (assoc e4 :fire-now true)
+             (if (:melee? e4)
+               ;; hound lunge: forward leap (600 fwd, 250 up) along target-yaw,
+               ;; airborne, ledges ignored until reset. :did-hit guards one hit.
+               (let [ty (:target-yaw e4)]
+                 (assoc e4
+                   :vel [(* (Math/sin ty) 600.0) 250.0 (* (Math/cos ty) 600.0)]
+                   :on-ground false :keep-off-ledges false :did-hit false))
+               (assoc e4 :fire-now true))
              e4)]
     e5))
 
@@ -149,7 +235,7 @@
         r0 (rng)
         tb (if (> r0 0.5) 0.5 -0.5)
         e0 (assoc enemy :turn-bias tb)
-        nxt (get (get STATES (:state e0)) :next)
+        nxt (get (get (enemy-states e0) (:state e0)) :next)
         e1 (if nxt (set-state e0 nxt game-time rng) e0)]
     (decide e1 dist angle can-see game-time rng)))
 
@@ -161,7 +247,7 @@
 (defn- apply-velocity [enemy]
   (if (not (:on-ground enemy))
     enemy
-    (let [fwd (* (state-speed (:state enemy)) (:speed enemy))
+    (let [fwd (* (state-speed enemy (:state enemy)) (:speed enemy))
           ty  (:target-yaw enemy)
           vx  (* (Math/sin ty) fwd)
           vz  (* (Math/cos ty) fwd)
@@ -180,32 +266,59 @@
         (apply-velocity)
         (advance-anim dt))))
 
-;; --- damage / death / grunt spec --------------------------------------------
+;; --- damage / death / type-spec construction ---------------------------------
 ;; entity_enemy._receive_damage: base subtracts health & kills; enemy override
 ;; wakes idle/patrol -> follow (facing the attacker's source = player). On death
 ;; the enemy is marked dead? and frozen (caller culls/gibs); further damage is a
-;; no-op. angle is taken to the player (q1k3's sole damage source).
+;; no-op. angle is taken to the player (q1k3's sole damage source). The zombie
+;; override ignores any hit not large enough to gib (> :damage-threshold).
 (defn receive-damage [enemy amount player-pos game-time rng]
-  (let [e (assoc enemy :health (- (:health enemy) amount))]
-    (cond
-      (<= (:health e) 0)                       (assoc e :health 0.0 :dead? true)
-      (or (= (:state e) :idle) (= (:state e) :patrol))
-      (let [ang (angle-to-player (:pos e) player-pos)]
-        (set-state (assoc e :target-yaw ang) :follow game-time rng))
-      :else e)))
+  (let [thresh (:damage-threshold enemy 0.0)]
+    (if (and (pos? thresh) (<= amount thresh))
+      enemy
+      (let [e (assoc enemy :health (- (:health enemy) amount))]
+        (cond
+          (<= (:health e) 0)                       (assoc e :health 0.0 :dead? true)
+          (or (= (:state e) :idle) (= (:state e) :patrol))
+          (let [ang (angle-to-player (:pos e) player-pos)]
+            (set-state (assoc e :target-yaw ang) :follow game-time rng))
+          :else e)))))
+
+;; make-enemy-of-type: build an enemy of a given type-keyword, merging its
+;; type-spec over a base enemy, then (re)setting the entry state so anim frames
+;; come from the type's own tables. patrol-dir 0 = idle, +/-1 = patrol facing +/-X.
+(defn make-enemy-of-type [type pos yaw patrol-dir]
+  (let [spec (or (type type-specs) {})
+        e0   (merge (make-enemy pos yaw) spec)]
+    (if (zero? patrol-dir)
+      (set-state e0 :idle 0.0 (fn [] 0.0))
+      (let [e1 (set-state e0 :patrol 0.0 (fn [] 0.0))]
+        (assoc e1 :target-yaw (* half-pi patrol-dir))))))
 
 (def ^:const grunt-health 40.0)
 (def ^:const grunt-texture 17)
 
 ;; entity_enemy_grunt._init: model grunt, texture 17, health 40. patrol-dir is
-;; 0 (idle) or +/-1 (patrol, strafe along +/-X at yaw +/- pi/2).
+;; 0 (idle) or +/-1 (patrol, strafe along +/-X at yaw +/- pi/2). Now a thin
+;; wrapper over the type-spec table so grunt shares the same construction path.
 (defn make-grunt [pos yaw patrol-dir]
-  (let [g (-> (make-enemy pos yaw)
-              (assoc :health grunt-health :texture grunt-texture :model :grunt))]
-    (if (zero? patrol-dir)
-      g
-      (let [e (set-state g :patrol 0.0 (fn [] 0.0))]
-        (assoc e :target-yaw (* half-pi patrol-dir))))))
+  (make-enemy-of-type :grunt pos yaw patrol-dir))
+
+;; spawn-from-entities: turn decoded q1k3 map entities into enemies. Entity
+;; type-ids (map.js spawn_class): 1 grunt, 2 enforcer, 3 ogre, 4 zombie, 5 hound.
+;; Non-enemy ids (player, pickups, lights…) and the not-yet-ported hound are
+;; skipped. World coords are x*32, y*16, z*32 (q1k3 scaling); data1 is the patrol
+;; direction. Pure over the entity list — no map/collision dependency.
+(def ^:private entity-type->enemy {1 :grunt 2 :enforcer 3 :ogre 4 :zombie 5 :hound})
+
+(defn spawn-from-entities [entities]
+  (->> entities
+       (keep (fn [e]
+               (when-let [type (entity-type->enemy (:type e))]
+                 (let [pos [(double (* (:x e) 32)) (double (* (:y e) 16)) (double (* (:z e) 32))]]
+                   (make-enemy-of-type type pos 0.0 (:data1 e 0))))))
+       vec))
+
 
 ;; enemy-view: the geometry bridge. Given solid cells, the player position and an
 ;; enemy, produce the FSM view {dist angle can-see} that step-enemy consumes.
@@ -235,3 +348,24 @@
                (conj out (dissoc e' :fire-now))
                (+ dmg hit)))
       [out dmg])))
+
+;; melee-contact: the hound's lunge deals damage on contact (entity_enemy_hound
+;; _did_collide_with_entity), once per :attack-exec (guarded by :did-hit). Called
+;; by the integration layer each tick with the player's center + half-extent.
+;; Returns [enemy' damage] — enemy' has :did-hit set so it can't double-hit.
+;; Non-melee enemies / grounded recover / already-hit all deal 0.
+(defn melee-contact [enemy player-pos player-half]
+  (if (and (:melee? enemy)
+           (= (:state enemy) :attack-exec)
+           (not (:did-hit enemy)))
+    (let [ep (:pos enemy)
+          dx (Math/abs (- (double (nth ep 0)) (double (nth player-pos 0))))
+          dy (Math/abs (- (double (nth ep 1)) (double (nth player-pos 1))))
+          dz (Math/abs (- (double (nth ep 2)) (double (nth player-pos 2))))
+          ex (+ (double (nth (:half enemy) 0)) (double (nth player-half 0)))
+          ey (+ (double (nth (:half enemy) 1)) (double (nth player-half 1)))
+          ez (+ (double (nth (:half enemy) 2)) (double (nth player-half 2)))]
+      (if (and (<= dx ex) (<= dy ey) (<= dz ez))
+        [(assoc enemy :did-hit true) (:melee-damage enemy 0.0)]
+        [enemy 0.0]))
+    [enemy 0.0]))
