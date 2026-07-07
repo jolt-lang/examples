@@ -33,13 +33,14 @@
 (defn pack-lights
   "Pack `lights` into a float-array of (* max-lights 6) floats (two vec3 per
   light), camera-faded, first-come up to max-lights. Zero-fade lights are
-  skipped; unused slots stay 0 (the shader loop sees colour 0 => no contribution).
-  `cam` is the camera world position [x y z]."
+  skipped. Returns [array packed-count]: the shader loops only over `packed-count`
+  lights (a dynamic bound), so fragments don't pay for empty slots. `cam` is the
+  camera world position [x y z]."
   [lights cam]
   (let [out (float-array (* max-lights 6))]
     (loop [ls (seq lights) slot 0]
       (if (or (nil? ls) (>= slot max-lights))
-        out
+        [out slot]
         (let [l (first ls)
               f (fade (dist3 (:pos l) cam) (:intensity l))]
           (if (<= f 0.0)

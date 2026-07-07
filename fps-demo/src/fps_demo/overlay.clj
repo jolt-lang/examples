@@ -59,30 +59,36 @@
 (def ^:private part-corner-idx
   (into [] (for [[a b c] cube-tris t [a b c]] t)))
 
-(defn particle-box-verts
-  "One axis-aligned cube per particle at its :pos, dark red, half-size
-  particle-half. 36 verts × 6 floats per particle. Emits straight into a
-  float-array (aset) rather than building Clojure vectors — the particle count
-  changes every frame, so this runs hot."
+;; Flat unit-cube template: the 36 emit-order corner offsets as one primitive
+;; double-array [x0 y0 z0  x1 y1 z1 …] (108 doubles). The hot box builders read
+;; it with aget instead of chaining persistent-vector nth per vertex — jolt's
+;; vector nth is O(n), so the old ~5 nth/vertex dominated the per-frame cost.
+(def ^:private cube-template
+  (double-array
+    (for [i (range 36)
+          :let [c (nth cube-corners (nth part-corner-idx i))]
+          k (range 3)]
+      (double (nth c k)))))
+
+(defn particle-point-verts
+  "One GL_POINTS vertex per particle: [x y z r g b], dark red. 6 floats each
+  (vs 216 for a cube) — jolt's per-element aset/upload is the per-frame cost, so
+  points keep blood/debris cheap even at high counts. gl_PointSize (flat shader)
+  gives each a perspective size."
   [particles]
-  (let [s   (double particle-half)
+  (let [n   (count particles)
         r   0.60 g 0.05 b 0.05
-        out (float-array (* (count particles) 216))]
-    (loop [ps particles base 0]
+        out (float-array (* n 6))]
+    (loop [ps particles k 0]
       (if (empty? ps) out
-          (let [pos (:pos (first ps))
-                px (double (pos 0)) py (double (pos 1)) pz (double (pos 2))
-                nb (loop [i 0 k base]
-                     (if (>= i 36) k
-                         (let [c (nth cube-corners (nth part-corner-idx i))]
-                           (aset out k       (+ px (* (double (c 0)) s)))
-                           (aset out (inc k) (+ py (* (double (c 1)) s)))
-                           (aset out (+ k 2) (+ pz (* (double (c 2)) s)))
-                           (aset out (+ k 3) r)
-                           (aset out (+ k 4) g)
-                           (aset out (+ k 5) b)
-                           (recur (inc i) (+ k 6)))))]
-            (recur (rest ps) nb))))))
+          (let [pos (:pos (first ps))]
+            (aset out k       (double (nth pos 0)))
+            (aset out (+ k 1) (double (nth pos 1)))
+            (aset out (+ k 2) (double (nth pos 2)))
+            (aset out (+ k 3) r)
+            (aset out (+ k 4) g)
+            (aset out (+ k 5) b)
+            (recur (rest ps) (+ k 6)))))))
 
 ;; --- in-flight projectiles (world space) ------------------------------------
 ;; q1k3 draws each projectile with its own model + texture; the flat pipeline
@@ -104,24 +110,25 @@
   36 verts × 6 floats per drawn projectile; returns a flat float-array."
   [projectiles]
   (let [drawn (filterv #(projectile-look (:kind %)) projectiles)
+        tmpl  ^doubles cube-template
         out   (float-array (* (count drawn) 216))]
     (loop [ps drawn base 0]
       (if (empty? ps) out
           (let [pr  (first ps)
                 pos (:pos pr)
                 [s [r g b]] (projectile-look (:kind pr))
-                s   (double s)
+                s   (double s) r (double r) g (double g) b (double b)
                 px (double (nth pos 0)) py (double (nth pos 1)) pz (double (nth pos 2))
-                nb (loop [i 0 k base]
+                nb (loop [i 0 k base ti 0]
                      (if (>= i 36) k
-                         (let [c (nth cube-corners (nth part-corner-idx i))]
-                           (aset out k       (+ px (* (double (c 0)) s)))
-                           (aset out (inc k) (+ py (* (double (c 1)) s)))
-                           (aset out (+ k 2) (+ pz (* (double (c 2)) s)))
-                           (aset out (+ k 3) (double r))
-                           (aset out (+ k 4) (double g))
-                           (aset out (+ k 5) (double b))
-                           (recur (inc i) (+ k 6)))))]
+                         (do
+                           (aset out k       (+ px (* (aget tmpl ti)       s)))
+                           (aset out (+ k 1) (+ py (* (aget tmpl (+ ti 1)) s)))
+                           (aset out (+ k 2) (+ pz (* (aget tmpl (+ ti 2)) s)))
+                           (aset out (+ k 3) r)
+                           (aset out (+ k 4) g)
+                           (aset out (+ k 5) b)
+                           (recur (inc i) (+ k 6) (+ ti 3)))))]
             (recur (rest ps) nb))))))
 
 (defn viewmodel-verts

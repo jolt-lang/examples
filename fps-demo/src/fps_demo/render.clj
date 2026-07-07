@@ -208,7 +208,8 @@
                    :model      (u "u_model")
                    :tex        (u "u_tex")
                    :num-tex    (u "u_num_textures")
-                   :lights     (u "u_lights")}}))))))
+                   :lights     (u "u_lights")
+                   :num-lights (u "u_num_lights")}}))))))
 
 (defn- upload-mat4
   "Write a 4×4 matrix to a uniform location as column-major (transpose=FALSE)."
@@ -238,12 +239,15 @@
                          (+ (nth eye 2) (nth forward 2))]
                         [0.0 1.0 0.0])))
 
-(defn- draw-flat!
-  "Upload interleaved pos3+color3 floats to the flat overlay VBO and draw them
-  with the given model-view-projection. `verts` is a flat seq of Float (6/vert).
-  Uses one dynamic buffer for the HUD, blood, and viewmodel — each pass rebinds
-  the program, uploads, and draws."
-  [state mvp verts]
+(def ^:private GL-POINTS (int 0x0000))
+(def ^:private GL-PROGRAM-POINT-SIZE (int 0x8642))
+
+(defn- draw-flat-mode!
+  "Upload interleaved pos3+color3 floats to the flat overlay VBO and draw them in
+  `mode` (GL_TRIANGLES or GL_POINTS) with the given model-view-projection. `verts`
+  is a flat seq/array of Float (6/vert). One dynamic buffer serves the HUD,
+  viewmodel (triangles) and particles (points); each pass rebinds/uploads/draws."
+  [state mvp verts mode]
   (let [f      (:flat state)
         n      (count verts)
         nverts (quot n 6)]
@@ -257,8 +261,11 @@
                            ptr GL-DYNAMIC-DRAW)
         (ffi/free ptr))
       (upload-mat4 (get-in f [:loc :mvp]) mvp)
-      (gl/gl-draw-arrays gl/GL-TRIANGLES 0 nverts)
+      (gl/gl-draw-arrays mode 0 nverts)
       (gl/gl-bind-vertex-array 0))))
+
+(defn- draw-flat!        [state mvp verts] (draw-flat-mode! state mvp verts gl/GL-TRIANGLES))
+(defn- draw-flat-points! [state mvp verts] (draw-flat-mode! state mvp verts GL-POINTS))
 
 (defn- frame-lights
   "The dynamic point lights active this frame (q1k3 r_push_light callers). A warm
@@ -291,10 +298,14 @@
   (gl/gl-clear-color 0.05 0.06 0.08 1.0)
   (gl/gl-clear (bit-or gl/GL-COLOR-BUFFER-BIT gl/GL-DEPTH-BUFFER-BIT))
   (gl/gl-enable gl/GL-DEPTH-TEST)
-  ;; fp-view's X-mirror flips triangle winding, so disable face culling rather
-  ;; than guess a front-face; the level and the grunt mesh are closed, so
-  ;; depth-testing handles hidden back faces (cost is negligible at this count).
-  (gl/gl-disable gl/GL-CULL-FACE)
+  (gl/gl-enable GL-PROGRAM-POINT-SIZE)   ; let the flat VS drive gl_PointSize (particles)
+  ;; Cull back faces to halve fragment work. fp-view's X-mirror (det = -1) flips
+  ;; winding, so the outward (CCW-in-model) faces present as CW on screen — front
+  ;; face is CW here. The overlay pass re-disables culling (its quads/points are
+  ;; winding-agnostic).
+  (gl/gl-enable gl/GL-CULL-FACE)
+  (gl/gl-front-face gl/GL-CW)
+  (gl/gl-cull-face gl/GL-BACK)
   (gl/gl-use-program (:prog state))
   (let [[ex ey ez] (:eye cam)
         [fx fy fz] (player/forward (:yaw cam) (:pitch cam))
@@ -309,10 +320,12 @@
     (gl/gl-bind-texture gl/GL-TEXTURE-2D (:tex state))
     (gl/gl-uniform-1i (:tex locs) 0)
     (gl/gl-uniform-1f (:num-tex locs) (double (:num-tex state)))
-    ;; upload the dynamic point-light array (two vec3 per light)
-    (let [arr (light/pack-lights (frame-lights cam (or hud {})) (:eye cam))
-          ptr (gl/write-floats arr)]
+    ;; upload the dynamic point-light array (two vec3 per light) + the active
+    ;; count, so the fragment loop only iterates lights that actually contribute
+    (let [[arr n] (light/pack-lights (frame-lights cam (or hud {})) (:eye cam))
+          ptr     (gl/write-floats arr)]
       (gl/gl-uniform-3fv (:lights locs) (* light/max-lights 2) ptr)
+      (gl/gl-uniform-1i (:num-lights locs) (* 2 n))
       (ffi/free ptr))
     (gl/gl-bind-vertex-array (:vao state))
     (gl/gl-draw-arrays gl/GL-TRIANGLES 0 (:count state))
@@ -332,12 +345,13 @@
           world (mat/mul proj view)
           hmap  (or hud {})]
       (gl/gl-disable gl/GL-DEPTH-TEST)
+      (gl/gl-disable gl/GL-CULL-FACE)     ; overlay quads (CCW, ortho) aren't cull-safe
       (when-let [fill (:health hmap)]
         (draw-flat! state ortho
                     (ov/hud-bar-verts w h (hud/bar-fill (double fill)))))
       (when-let [parts (:particles hmap)]
         (when (pos? (count parts))
-          (draw-flat! state world (ov/particle-box-verts parts))))
+          (draw-flat-points! state world (ov/particle-point-verts parts))))
       (draw-flat! state ortho
                   (ov/viewmodel-verts (hud/muzzle-active? (:time hmap)
                                                           (:fire-time hmap))))

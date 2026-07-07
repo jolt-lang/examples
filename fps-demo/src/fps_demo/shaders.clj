@@ -7,9 +7,11 @@
 
 (def flat-spec
   "Unlit flat-color shader: position + per-vertex color attributes, a single
-  model-view-projection. Used for the screen-space HUD (ortho), world-space blood
-  particles, and the first-person shotgun viewmodel. Per-vertex color means each
-  pass is one upload + one draw, no color-grouping needed."
+  model-view-projection. Used for the screen-space HUD (ortho), the first-person
+  shotgun viewmodel (triangles), and world-space particles (GL_POINTS). Per-vertex
+  color means each pass is one upload + one draw, no color-grouping needed.
+  gl_PointSize gives particles a perspective-attenuated pixel size (ignored by
+  the triangle draws)."
   {:version "330 core"
    :prelude ""
    :uniforms {:u_mvp :mat4}
@@ -18,7 +20,9 @@
    :varying {:v_color :vec3}
    :fs-out {:frag_color :vec4}
    :vs-main [[:set :v_color :a_color]
-             [:set :gl_Position [:* :u_mvp [:vec4 :a_pos 1.0]]]]
+             [:set :gl_Position [:* :u_mvp [:vec4 :a_pos 1.0]]]
+             ;; particle point size ~ world-size / distance (clip.w ≈ view depth)
+             [:set :gl_PointSize [:clamp [:/ 2200.0 [:. :gl_Position :w]] 2.0 64.0]]]
    :fs-main [[:set :frag_color [:vec4 :v_color 1.0]]]})
 
 ;; q1k3's dynamic point-light array (renderer.js). The shader DSL has no for-loop,
@@ -29,9 +33,10 @@
 (def ^:private lit-prelude
   (str
    "uniform vec3 u_lights[32];\n"
+   "uniform int u_num_lights;\n"           ; 2 * active lights (dynamic loop bound)
    "vec3 accum_light(vec3 wp, vec3 nrm){\n"
    "  vec3 vl = vec3(0.0);\n"
-   "  for (int i = 0; i < 32; i += 2) {\n"
+   "  for (int i = 0; i < u_num_lights; i += 2) {\n"
    "    vec3 d = u_lights[i] - wp;\n"
    "    float dd = dot(d, d);\n"
    "    vl += max(dot(nrm, d / max(sqrt(dd), 0.0001)), 0.0) * (1.0 / max(dd, 1.0)) * u_lights[i+1];\n"

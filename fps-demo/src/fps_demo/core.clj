@@ -302,6 +302,26 @@
 
 (def ^:private render-crash-dumped (atom false))
 (def ^:private shot-taken (atom false))
+(def ^:private frame-count (atom 0))
+(def ^:private frame-t0 (atom nil))
+(def ^:private draw-ns-sum (atom 0))
+
+(defn- tick-fps! [draw-ns]
+  ;; FPS_DEMO_FPS: print the real render frame rate + avg draw! CPU time every 60
+  ;; frames (stderr). Comparing the two says whether we're draw-bound or vsync-idle.
+  (when (System/getenv "FPS_DEMO_FPS")
+    (let [now (System/nanoTime) n (swap! frame-count inc)]
+      (swap! draw-ns-sum + draw-ns)
+      (when (nil? @frame-t0) (reset! frame-t0 now))
+      (when (>= n 60)
+        (let [dt (/ (double (- now @frame-t0)) 1.0e9)]
+          (binding [*out* *err*]
+            (println (format "[fps-demo] %.1f fps  (%.2f ms/frame, draw! %.2f ms)"
+                             (/ 60.0 dt) (* 1000.0 (/ dt 60.0))
+                             (/ (double @draw-ns-sum) 60.0 1.0e6)))))
+        (reset! frame-count 0)
+        (reset! frame-t0 now)
+        (reset! draw-ns-sum 0)))))
 
 (defn- render!  [_area]
   (when-let [s @render-state]
@@ -317,7 +337,9 @@
                 :fire-time   (:fire-time g)
                 :time        (:time g)}]
       (try
-        (render/draw! s w h cam (:enemies g) hud)
+        (let [t0 (System/nanoTime)]
+          (render/draw! s w h cam (:enemies g) hud)
+          (tick-fps! (- (System/nanoTime) t0)))
         ;; headless visual check: FPS_DEMO_SHOT=/path dumps one settled frame
         ;; (after the scene has run ~1.5 s so enemies are awake) as raw RGBA.
         (when-let [path (System/getenv "FPS_DEMO_SHOT")]

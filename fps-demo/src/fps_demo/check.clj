@@ -1107,25 +1107,29 @@
   (assert (approx= (light/fade 896.0 1.0) 5.0)  "light half-faded at 896u")
   (assert (approx= (light/fade 2000.0 1.0) 0.0) "light clamped to 0 past far range")
   (assert (approx= (light/fade 100.0 2.0) 20.0) "intensity scales the fade")
-  ;; pack-lights: colour pre-multiplied by fade, packed two vec3 per light.
+  ;; pack-lights: colour pre-multiplied by fade, packed two vec3 per light;
+  ;; returns [array packed-count] so the shader loops only over live lights.
   (let [cam  [0.0 0.0 100.0]
-        arr  (light/pack-lights [{:pos [0.0 0.0 0.0] :intensity 1.0 :color [255.0 128.0 64.0]}] cam)]
+        [arr n] (light/pack-lights [{:pos [0.0 0.0 0.0] :intensity 1.0 :color [255.0 128.0 64.0]}] cam)]
     (assert (= (alength arr) (* light/max-lights 6)) "packed array is max-lights * 6 floats")
+    (assert (= n 1) "one in-range light -> packed-count 1")
     (assert (approx= (aget arr 0) 0.0) "light pos.x packed")
     (assert (approx= (aget arr 2) 0.0) "light pos.z packed")
     ;; dist 100 < 768 -> fade 10; colour *= 10
     (assert (approx= (aget arr 3) 2550.0) "colour.r pre-multiplied by fade (255*10)")
     (assert (approx= (aget arr 4) 1280.0) "colour.g pre-multiplied by fade (128*10)")
     (assert (approx= (aget arr 5) 640.0)  "colour.b pre-multiplied by fade (64*10)"))
-  ;; a light beyond the far range contributes nothing (slot stays zero).
-  (let [arr (light/pack-lights [{:pos [0.0 0.0 5000.0] :intensity 1.0 :color [255.0 255.0 255.0]}]
-                               [0.0 0.0 0.0])]
-    (assert (approx= (aget arr 3) 0.0) "far light packs no colour"))
+  ;; a light beyond the far range contributes nothing (skipped, count 0).
+  (let [[arr n] (light/pack-lights [{:pos [0.0 0.0 5000.0] :intensity 1.0 :color [255.0 255.0 255.0]}]
+                                   [0.0 0.0 0.0])]
+    (assert (approx= (aget arr 3) 0.0) "far light packs no colour")
+    (assert (= n 0) "far light -> packed-count 0"))
   ;; more than max-lights are capped (only the first max-lights land).
   (let [many (repeat (* 3 light/max-lights)
                      {:pos [0.0 0.0 0.0] :intensity 1.0 :color [10.0 10.0 10.0]})
-        arr  (light/pack-lights many [0.0 0.0 0.0])]
+        [arr n] (light/pack-lights many [0.0 0.0 0.0])]
     (assert (= (alength arr) (* light/max-lights 6)) "array stays max-lights wide with overflow")
+    (assert (= n light/max-lights) "packed-count caps at max-lights")
     (assert (approx= (aget arr (- (* light/max-lights 6) 3)) 100.0) "last slot filled (10*10)"))
   (println "light: fade / pack / far-cull / overflow-cap ok")
 
@@ -1227,10 +1231,12 @@
           fill-w (- fill-right fill-left)]
       (assert (approx= (* bg-w 0.5) fill-w)
               (str "half-health fill is half-width: bg-w=" bg-w " fill-w=" fill-w))))
-  ;; particle-box: 36 verts per particle (a cube = 12 tris), 6 floats/vert
+  ;; particle points: one GL_POINTS vertex per particle (pos3 + color3 = 6 floats)
   (let [ps  [{:pos [1.0 2.0 3.0]} {:pos [4.0 5.0 6.0]}]
-        fv  (ov/particle-box-verts ps)]
-    (assert (= (* 36 6 2) (count fv)) (str "2 particles => 432 floats, got " (count fv))))
+        fv  (ov/particle-point-verts ps)]
+    (assert (= (* 6 2) (count fv)) (str "2 particles => 12 floats (1 point each), got " (count fv)))
+    (assert (approx= (aget fv 0) 1.0) "point 0 carries the particle position")
+    (assert (approx= (aget fv 6) 4.0) "point 1 carries the particle position"))
   ;; viewmodel: at least one gun quad; muzzle flash adds geometry (more floats)
   (let [idle  (ov/viewmodel-verts false)
         flash (ov/viewmodel-verts true)]
@@ -1247,7 +1253,7 @@
       ;; idle is 4 body quads (24 verts = 144 floats); flash adds 1 quad (30 verts).
       (assert (approx= 144.0 (double (count idle)))  (str "idle = 4 quads = 144 floats; got " (count idle)))
       (assert (approx= 180.0 (double (count flash))) (str "flash = 5 quads = 180 floats; got " (count flash)))))
-  (println "overlay: hud-bar / particle-box / viewmodel vert counts ok")
+  (println "overlay: hud-bar / particle-point / viewmodel vert counts ok")
 
   ;; --- #65/#74 HUD: ammo readout (faithful GL analog of q1k3's ∞ text) -------
   ;; q1k3 draws the active weapon's ammo as DOM text — `weapon._needs_ammo ?

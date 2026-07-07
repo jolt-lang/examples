@@ -48,6 +48,8 @@ You spawn at the level's `info_player_start`, with collision against the
   a tiny script (any raw-RGBA → PNG encoder; the drawable size is printed to
   stderr as `SHOT <w> <h> <path>`). `FPS_DEMO_SHOT_AT` sets the game-time
   (seconds) at which the frame is captured (default `1.5`).
+- `FPS_DEMO_FPS` — print the real render frame rate and average `draw!` CPU time
+  to stderr every 60 frames (a quick way to tell draw-bound from vsync-idle).
 
 ## Headless sanity check
 
