@@ -13,5 +13,9 @@
  ;; libs at startup.
  :aliases {:run {:main-opts ["-m" "app.core"]}}
 
+ :jolt/build {:opt true
+              :direct-link true
+              :tree-shake true}
+
  :tasks {run  "joltc -M:run"
          build "joltc build -m app.core"}}
