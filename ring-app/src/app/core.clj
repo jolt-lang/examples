@@ -17,13 +17,18 @@
   jolt.crypto (OpenSSL-backed javax.crypto shims) is required before ring-defaults
   so ring-core's encrypted session-cookie store loads; ring-defaults then wraps the
   handler with params + static-resource + content-type + session middleware, so the
-  CSS under resources/public is served with the right MIME type."
+  CSS under resources/public is served with the right MIME type.
+
+  jolt.time (the java.time.* host shim) is required before tick: tick pulls in
+  cljc.java-time, whose namespaces touch java.time.* statics at load time, and
+  those resolve only once jolt.time has installed the shim."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
             [integrant.core :as ig]
             [selmer.parser :as selmer]
             [jolt.crypto]
+            [jolt.time]
             [ring.middleware.defaults :as defaults]
             [ring-chez.adapter :as adapter]
             [app.db :as db]))

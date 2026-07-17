@@ -5,7 +5,10 @@
  ;; jolt-lang/ring-chez-adapter library (BSD sockets over jolt.ffi); the SQLite
  ;; binding is jolt-lang/db (jdbc.core over libsqlite3 via jolt.ffi); the rest are
  ;; pure-Clojure libraries pulled straight from their git repos and run unchanged.
- :deps {jolt-lang/ring-chez-adapter
+ :deps {jolt-lang/time
+        {:git/url "https://github.com/jolt-lang/time.git"
+         :git/sha "26ae332cbe4b6515ae2386c50ed0ae34cafa483a"}
+        jolt-lang/ring-chez-adapter
           {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
            :git/sha "fc17e5f253227ece508062681cea38402b679823"}
          jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
@@ -85,5 +88,5 @@
                                 :git/sha "a4d1ffb9ea2771baf390d9c99a4332926843451f"}}
                   :main-opts ["-m" "app.core-test"]}}
 
- :tasks {run  {:doc "run the server" :main-opts ["-m" "app.core"]}
-         test "joltc -M:test"}}
+  :tasks {serve {:doc "run the server" :main-opts ["-m" "app.core"]}
+          test "joltc -M:test"}}

@@ -15,12 +15,38 @@ and CSRF middleware needs `javax.crypto`, which **jolt-lang/jolt-crypto** suppli
 over the system OpenSSL — so the whole `site-defaults` stack loads and runs.
 
 ```
-joltc run                       # listens on config.edn's :port (3000)
-PORT=8080 joltc run             # PORT beats config.edn (Integrant applies the override)
+joltc serve                     # listen on config.edn's :port (3000)
+PORT=8080 joltc serve           # PORT beats config.edn (Integrant applies the override)
 joltc -M:test                   # rendering, routing, middleware, the guestbook
 ```
 
 Then visit <http://127.0.0.1:3000>, sign the guestbook, and watch the request log.
+(`joltc run` won't work — `run` is a built-in jolt command, so the project's
+`:serve` task is what starts the server; `joltc -m app.core` is the long form.)
+
+## Dev mode (REPL)
+
+For live development, start an nREPL server and connect your editor, or use the
+terminal REPL in this directory:
+
+```
+joltc nrepl-server              # nREPL on 127.0.0.1:7888 (.nrepl-port written)
+joltc                           # ...or a terminal REPL
+```
+
+`-main` blocks on a sleep loop, so in the REPL start the Integrant system by
+hand. `run-server` serves on a background thread, so the REPL stays responsive:
+
+```
+(require '[app.core :as core]
+         '[integrant.core :as ig])
+(def system (ig/init (core/load-config)))   ; starts serving on :port (3000)
+(ig/halt! system)                            ; stop the server
+
+;; edit app.core, then reload + restart to pick up handler changes:
+(require '[app.core :as core] :reload)
+(def system (ig/init (core/load-config)))
+```
 
 ## Libraries
 
