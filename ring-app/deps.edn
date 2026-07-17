@@ -8,9 +8,9 @@
  :deps {jolt-lang/time
         {:git/url "https://github.com/jolt-lang/time.git"
          :git/sha "26ae332cbe4b6515ae2386c50ed0ae34cafa483a"}
-        jolt-lang/ring-chez-adapter
-          {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-           :git/sha "fc17e5f253227ece508062681cea38402b679823"}
+         jolt-lang/ring-chez-adapter
+           {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
+            :git/sha "07f14d96be093c46af449f70df6fade69fbb005b"}
          jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
                        :git/sha "fe52f468d468c6cf86b2c9190c6a703cf4e0b149"}
          ;; crypto (AES/HMAC/SecureRandom over OpenSSL) so ring-defaults' session
