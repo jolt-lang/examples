@@ -74,11 +74,15 @@
          ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
          org.clojure/tools.logging
            {:git/url "https://github.com/jolt-lang/logging"
-            :git/sha "7e26daaf4b91df3076c4c0342d0270fc962fca27"}}
+            :git/sha "7e26daaf4b91df3076c4c0342d0270fc962fca27"}
+         ;; nREPL middleware — sessions, interruptible-eval, completions, lookup
+         jolt-lang/nrepl {:git/url "https://github.com/jolt-lang/nrepl"
+                          :git/sha "8d782a7a0cfcf7b12acbc8fcdd46b2df4c11690b"}}
 
  ;; `joltc build -m app.core` bakes these dirs' files into the binary, so the
  ;; Selmer template + CSS resolve via io/resource with no resources/ dir on disk.
  ;; config.edn is read via io/file at runtime, so it stays external.
+ :nrepl/middleware [nrepl.middleware/default-middleware]
  :jolt/build {:embed ["resources"]}
 
  :aliases {:test {:extra-paths ["test"]
