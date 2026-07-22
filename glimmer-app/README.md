@@ -45,6 +45,26 @@ joltc -M:run        # or: joltc run
 
 This opens the window and blocks until you close it.
 
+## Develop it live from your editor
+
+Start an nREPL server and connect your editor (Calva, CIDER, Cursive):
+
+```sh
+joltc nrepl-server        # writes .nrepl-port; ^C to stop
+```
+
+Then evaluate `(app.core/-main)` to open the window. The eval returns right away
+and the window keeps running, so you can keep working in the same session. Change
+the app the way you would with reagent: mutate a ratom (`(swap! ...)` / `(reset!
+...)`) and the parts of the UI that deref it re-render in the live window. To
+change a component's shape, redefine it and re-mount the root with
+`(glimmer.core/on-gui #(...))`.
+
+The GUI runs on the process main thread while your evaluations run on nREPL
+worker threads. glimmer marshals every reactive re-render back onto the main loop
+for you, since GTK (and AppKit on macOS) reject widget mutation off the main
+thread.
+
 ## Build a standalone binary
 
 ```sh
