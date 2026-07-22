@@ -54,16 +54,23 @@ joltc nrepl-server        # writes .nrepl-port; ^C to stop
 ```
 
 Then evaluate `(app.core/-main)` to open the window. The eval returns right away
-and the window keeps running, so you can keep working in the same session. Change
-the app the way you would with reagent: mutate a ratom (`(swap! ...)` / `(reset!
-...)`) and the parts of the UI that deref it re-render in the live window. To
-change a component's shape, redefine it and re-mount the root with
-`(glimmer.core/on-gui #(...))`.
+and the window keeps running, so you can keep working in the same session.
+
+Two kinds of edits show up live, both in the same window:
+
+- **State**, the reagent way: mutate a ratom (`(swap! ...)` / `(reset! ...)`) and
+  the parts of the UI that deref it re-render.
+- **Component code**: redefine a component function, re-evaluate it, then call
+  `(glimmer.core/reload!)` to re-render the running window in place.
+  `reload!` re-runs the root and re-resolves the child components it renders, so
+  redefined children take effect. To swap the root itself after redefining it,
+  pass it: `(glimmer.core/reload! app.core/todo-app)`. Reloading rebuilds the
+  tree, so the task list resets to its defaults.
 
 The GUI runs on the process main thread while your evaluations run on nREPL
-worker threads. glimmer marshals every reactive re-render back onto the main loop
-for you, since GTK (and AppKit on macOS) reject widget mutation off the main
-thread.
+worker threads. glimmer marshals every re-render (reactive updates and `reload!`)
+back onto the main loop for you, since GTK (and AppKit on macOS) reject widget
+mutation off the main thread.
 
 ## Build a standalone binary
 

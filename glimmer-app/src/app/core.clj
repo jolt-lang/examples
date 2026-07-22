@@ -143,4 +143,20 @@
           :title "glimmer · todos"
           :width 460 :height 600
           :app-id "glimmer.app.todos"))
-#_(-main)
+
+;; Live development from the REPL (reagent-style), all in one window:
+;;   1. `joltc nrepl-server` in this directory, then connect your editor.
+;;   2. Evaluate (-main) to open the window. The eval returns; the app keeps
+;;      running, so the session stays live.
+;;   3. Reactive edits show up on their own: (swap! ...) / (reset! ...) a ratom the
+;;      UI derefs and the affected widgets re-render.
+;;   4. To pick up redefined component functions, re-evaluate them and then call
+;;      reload! to re-render the SAME window:
+;;        (ui/reload!)          re-runs the root and re-resolves the child widgets
+;;                              it renders, so redefined children take effect.
+;;        (ui/reload! todo-app) also swaps in a redefined root component.
+;;      reload! rebuilds the tree, so the task list resets to its defaults.
+(comment
+  (-main)
+  (ui/reload!)
+  (ui/reload! todo-app))
