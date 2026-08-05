@@ -22,8 +22,16 @@
   (:require [clojure.string :as str]
             [glimmer.ratom :refer [atom cursor reaction]]
             [glimmer.core :as ui]
-            [jolt.image :as image]
+            [app.persist :as persist]
             [app.widgets :as w]))
+
+(defrecord Task [id text done])
+
+;; The three filters are named functions, so they can live in the state itself
+;; and be written to the image by name.
+(defn any?    [_] true)
+(defn active? [t] (not (:done t)))
+(defn done?   [t] (boolean (:done t)))
 
 (defn- title []
   [:label {:markup [:span {:size "30000" :weight "bold" :foreground "#b83f45"} "todos"]
@@ -44,7 +52,7 @@
   [:label {:markup [:span {:foreground "#8e939d"}
                     (if (zero? total)
                       "No todos yet — add one above to get started."
-                      (str "No " (name filter-val) " todos — try another filter."))]
+                      (str "No " filter-val " todos — try another filter."))]
            :halign :center :margin 24}])
 
 (defn- todo-list [visible total filter-val toggle-todo delete-todo]
@@ -65,7 +73,7 @@
 
 ;; The footer: items-left count, the three filters, a done-last sort toggle, and
 ;; clear-completed. Two compact rows so nothing is cramped.
-(defn- footer [remaining done-count filter-cursor sort-cursor clear-completed]
+(defn- footer [remaining done-count filter-name set-filter sort-cursor clear-completed]
   [:vbox {:spacing 8 :margin-start 14 :margin-end 14 :margin-top 4 :margin-bottom 14}
    [:hbox {:spacing 10 :valign :center}
     [:label {:markup (count-markup remaining) :hexpand true :halign :start :xalign 0.0}]
@@ -74,96 +82,120 @@
                    :on-toggled (fn [] (swap! sort-cursor not))
                    :tooltip    "sort completed todos to the bottom"}]]
    [:hbox {:spacing 8 :valign :center}
-    [w/filter-bar filter-cursor]
+    [w/filter-bar filter-name set-filter any? active? done?]
     [:button {:label     "clear completed"
               :on-click  clear-completed
               :sensitive (pos? done-count)
               :tooltip   "remove completed todos"}]]])
 
 ;; State lives at the top level in defonce reactive cells, not inside the
-;; component. That is what lets REPL hot-reload preserve it: re-evaluating this
-;; namespace leaves the defonce cells untouched, and glimmer.core/reload! rebuilds
-;; the component tree against the same state — reagent-style. (State kept in a
-;; component's own let would reset on every reload.)
-(defonce state (atom {:tasks   [{:id 1 :text "Read the glimmer README"  :done true}
-                                {:id 2 :text "Build the showcase app"   :done false}
-                                {:id 3 :text "Wire a signal to an atom" :done false}
-                                {:id 4 :text "Ship something with it"   :done false}]
-                      :filter  :all
-                      :sort-done-last false
-                      :draft   ""
-                      :next-id 5}))
+;; component. That is what lets REPL hot-reload preserve it, and it is also what
+;; makes the whole thing imageable: `dump-world!` walks the var table, so every
+;; def below is in the image without anything listing them.
+;;
+;; The board deliberately holds things EDN could not carry:
+;;   - Task RECORDS, which come back as Tasks, not as maps
+;;   - a live FUNCTION in :filter-fn, which comes back callable
+;;   - :index, sharing the very same Task objects as :tasks (identity survives)
+;; plus an undo history whose snapshots share structure with the current board.
+(defn- index-by-id [tasks] (into {} (map (fn [t] [(:id t) t])) tasks))
 
-;; cursors: writable lenses over the root atom
+(defn- board [tasks]
+  {:tasks tasks
+   :index (index-by-id tasks)          ; same Task objects, two ways in
+   :filter-fn any?                     ; a live function, not a keyword
+   :filter-name "all"
+   :sort-done-last false
+   :draft ""
+   :next-id (inc (reduce max 0 (map :id tasks)))})
+
+(defonce state (atom (board [(->Task 1 "Read the glimmer README" true)
+                             (->Task 2 "Build the showcase app" false)
+                             (->Task 3 "Wire a signal to an atom" false)
+                             (->Task 4 "Ship something with it" false)])))
+
+;; Undo snapshots share structure with the board they came from; the image keeps
+;; that sharing rather than writing N independent copies.
+(defonce undo (clojure.core/atom []))
+
+;; cursors and reactions are DERIVED from the root atom. They hold closures, so
+;; they cannot travel in an image — they are rebuilt after a restore instead.
+;; declare-then-build keeps the vars stable across a rebuild.
 (defonce draft (cursor state [:draft]))
-(defonce flt   (cursor state [:filter]))
 (defonce sort? (cursor state [:sort-done-last]))
-
-;; reactions: read-only derived cells
 (defonce remaining  (reaction (count (remove :done (:tasks @state)))))
 (defonce done-count (reaction (count (filter :done (:tasks @state)))))
 (defonce visible    (reaction
-                      (let [ts     (:tasks @state)
-                            picked (case @flt
-                                     :active (remove :done ts)
-                                     :done   (filter :done ts)
-                                     ts)]
-                        (if @sort?
+                      (let [s      @state
+                            picked (filterv (:filter-fn s) (:tasks s))]
+                        (if (:sort-done-last s)
                           (sort-by (fn [t] [(if (:done t) 1 0) (:id t)]) picked)
                           picked))))
 
-;; mutations: plain fns over the root atom (redefinable in the REPL)
+;; The after-restore half: the handler hands back plain stand-in ratoms for the
+;; derived cells, so re-derive them from the restored root and rebind the vars.
+(defn rebuild-cells! []
+  (alter-var-root #'draft      (constantly (cursor state [:draft])))
+  (alter-var-root #'sort?      (constantly (cursor state [:sort-done-last])))
+  (alter-var-root #'remaining  (constantly (reaction (count (remove :done (:tasks @state))))))
+  (alter-var-root #'done-count (constantly (reaction (count (filter :done (:tasks @state))))))
+  (alter-var-root #'visible    (constantly (reaction
+                                             (let [s      @state
+                                                   picked (filterv (:filter-fn s) (:tasks s))]
+                                               (if (:sort-done-last s)
+                                                 (sort-by (fn [t] [(if (:done t) 1 0) (:id t)]) picked)
+                                                 picked)))))
+  nil)
+
+;; mutations: plain fns over the root atom. Each one keeps :index in step with
+;; :tasks, so the two always hold the SAME Task objects rather than equal copies.
+(defn- resync [s tasks]
+  (assoc s :tasks tasks :index (index-by-id tasks)))
+
+(defn- snapshot! []
+  (clojure.core/swap! undo conj @state))
+
 (defn add-todo []
   (let [text (str/trim @draft)]
     (when (seq text)
+      (snapshot!)
       (swap! state (fn [s]
                      (-> s
-                         (update :tasks conj {:id (:next-id s) :text text :done false})
+                         (resync (conj (:tasks s) (->Task (:next-id s) text false)))
                          (assoc :draft "")
                          (update :next-id inc)))))))
 (defn toggle-todo [id]
-  (swap! state update :tasks
-         (fn [ts] (mapv (fn [t] (if (= (:id t) id) (update t :done not) t)) ts))))
+  (snapshot!)
+  (swap! state (fn [s] (resync s (mapv (fn [t] (if (= (:id t) id) (update t :done not) t))
+                                       (:tasks s))))))
 (defn delete-todo [id]
-  (swap! state update :tasks
-         (fn [ts] (vec (remove (fn [t] (= (:id t) id)) ts)))))
+  (snapshot!)
+  (swap! state (fn [s] (resync s (vec (remove (fn [t] (= (:id t) id)) (:tasks s)))))))
 (defn toggle-all []
-  (swap! state update :tasks
-         (fn [ts] (let [target (not (every? :done ts))]
-                    (mapv (fn [t] (assoc t :done target)) ts)))))
-(defn clear-completed [] (swap! state update :tasks #(vec (remove :done %))))
+  (snapshot!)
+  (swap! state (fn [s] (let [target (not (every? :done (:tasks s)))]
+                         (resync s (mapv (fn [t] (assoc t :done target)) (:tasks s)))))))
+(defn clear-completed []
+  (snapshot!)
+  (swap! state (fn [s] (resync s (vec (remove :done (:tasks s)))))))
 
-;; --- state export / import ----------------------------------------------------
-;; The board is plain data — maps, vectors, keywords, strings, booleans — so it
-;; writes as an image with nothing to special-case. The reactive cells are NOT
-;; part of it: cursors and reactions are derived from the root atom, so restoring
-;; the root value re-derives them and the whole UI follows.
-;;
-;; Note what is dumped: @state, the VALUE, not the ratom. Dumping the ratom would
-;; drag glimmer's watch closures in, and those have no names to write — image/scan
-;; would report them rather than write a half-usable file.
-(def image-path "todos.jimg")
+(defn set-filter [f nm]
+  (swap! state assoc :filter-fn f :filter-name nm))
 
+(defn undo! []
+  (when-let [prev (peek @undo)]
+    (clojure.core/swap! undo pop)
+    (reset! state prev)))
+
+;; --- saving and reloading the world --------------------------------------------
+;; app.persist does the work; these just thread the result into the status line.
 (defonce status (atom ""))
 
-(defn export-state! []
-  (reset! status
-          (try
-            (image/dump! image-path @state)
-            (str "exported " (count (:tasks @state)) " todos to " image-path)
-            (catch Exception e
-              (str "export failed: " (ex-message e))))))
+(defn save-image! [] (reset! status (persist/save!)))
+(defn load-image! [] (reset! status (persist/load!)))
 
-(defn import-state! []
-  (reset! status
-          (try
-            (let [v (image/read-image image-path)]
-              ;; Replace the root value in one write so the cursors and reactions
-              ;; over it recompute once, rather than per key.
-              (reset! state v)
-              (str "imported " (count (:tasks v)) " todos from " image-path))
-            (catch Exception e
-              (str "import failed: " (ex-message e))))))
+;; Re-derive the reactive graph after a restore, then re-render.
+(persist/install-rebuild-hook! rebuild-cells!)
 
 ;; The root component: a plain render over the reactive cells above. It derefs
 ;; them, so it re-renders when any changes; redefine it (or any widget it calls)
@@ -173,13 +205,13 @@
         all-done? (and (pos? total) (zero? @remaining))]
     [:vbox {:spacing 0}
      [title]
-     [w/nav-bar export-state! import-state! @status]
+     [w/nav-bar save-image! load-image! undo! (count @undo) @status]
      [:separator]
      [add-bar total all-done? toggle-all draft add-todo]
      [:separator]
-     [todo-list @visible total @flt toggle-todo delete-todo]
+     [todo-list @visible total (:filter-name @state) toggle-todo delete-todo]
      [:separator]
-     [footer @remaining @done-count flt sort? clear-completed]]))
+     [footer @remaining @done-count (:filter-name @state) set-filter sort? clear-completed]]))
 
 (defn -main [& _]
   (ui/run todo-app

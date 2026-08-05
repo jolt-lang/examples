@@ -14,17 +14,21 @@
 ;; are passed in already bound; this component only draws. The status line is a
 ;; reaction-free plain value so a failed export reads the same way as a
 ;; successful one — it is the message the app decided to show.
-(defn nav-bar [on-export on-import status]
+(defn nav-bar [on-save on-load on-undo undo-depth status]
   [:vbox {:spacing 4 :margin-start 14 :margin-end 14 :margin-top 8}
    [:hbox {:spacing 8 :valign :center}
-    [:label {:markup [:span {:weight "bold" :foreground "#8e939d"} "state"]
+    [:label {:markup [:span {:weight "bold" :foreground "#8e939d"} "image"]
              :halign :start :hexpand true :xalign 0.0}]
-    [:button {:label    "export"
-              :on-click on-export
-              :tooltip  "write the current todos to todos.jimg"}]
-    [:button {:label    "import"
-              :on-click on-import
-              :tooltip  "replace the current todos with todos.jimg"}]]
+    [:button {:label     "undo"
+              :on-click  on-undo
+              :sensitive (pos? undo-depth)
+              :tooltip   "step back through the shared history"}]
+    [:button {:label    "save image"
+              :on-click on-save
+              :tooltip  "write the whole application world to todos.jimg"}]
+    [:button {:label    "load image"
+              :on-click on-load
+              :tooltip  "restore the whole application world from todos.jimg"}]]
    (when (seq status)
      [:label {:markup [:span {:foreground "#8e939d" :size "9000"} status]
               :halign :start :xalign 0.0 :wrap true :max-width-chars 52}])])
@@ -33,17 +37,16 @@
 ;; segmented control. The active filter's button is disabled (:sensitive false)
 ;; so it reads as the current selection. Each :on-click writes the cursor — a
 ;; reactive write — and the bar re-renders.
-(defn filter-bar [filter-cursor]
-  (let [current @filter-cursor
-        button  (fn [kw label]
-                  [:button {:label     label
-                            :sensitive (not= current kw)
-                            :on-click  #(reset! filter-cursor kw)
-                            :tooltip   (str "show " label " todos")}])]
+(defn filter-bar [filter-name set-filter any-fn active-fn done-fn]
+  (let [button (fn [f label]
+                 [:button {:label     label
+                           :sensitive (not= filter-name label)
+                           :on-click  #(set-filter f label)
+                           :tooltip   (str "show " label " todos")}])]
     [:hbox {:spacing 6 :homogeneous true :hexpand true}
-     (button :all    "all")
-     (button :active "active")
-     (button :done   "done")]))
+     (button any-fn    "all")
+     (button active-fn "active")
+     (button done-fn   "done")]))
 
 ;; A single interactive task line: a checkbutton that toggles done, the wrapped
 ;; text (struck through and muted when done), and a delete button. The handlers

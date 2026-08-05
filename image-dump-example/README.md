@@ -1,36 +1,58 @@
 # image-dump-example
 
-A reactive todo board that can **export its state to a file and import it back** —
+A reactive todo board that saves and reloads **the whole running program** —
 an example of [`jolt.image`](https://jolt-lang.github.io/docs/rfc/0009-program-image-dump-restore.html),
 built with [glimmer](https://github.com/jolt-lang/glimmer), a reagent-style
 reactive GUI toolkit over GTK4 for the [Jolt](https://github.com/jolt-lang/jolt)
 Clojure dialect.
 
-## State export / import
+## Saving the world
 
-The navbar at the top has **export** and **import**. Export writes the current
-board to `todos.jimg`; import replaces the board with whatever is in that file.
-Add a few todos, export, change things, then import to get the exported board
-back. The file survives restarts, and can be moved to another machine — even one
-on a different CPU architecture — and imported by the same build of the app
-there.
-
-What gets written is `@state`, the plain-data value, not the ratom:
+The navbar has **save image** and **load image**. They do not save a variable —
+they save the *program*, the way a Smalltalk image or Common Lisp's
+`save-lisp-and-die` does:
 
 ```clojure
-(image/dump! "todos.jimg" @state)          ; export
-(reset! state (image/read-image "todos.jimg"))  ; import
+(jolt.image/dump-world! "todos.jimg" ["app.core"])
+(jolt.image/restore-world! "todos.jimg")
 ```
 
-Dumping the ratom itself would drag glimmer's watch closures in, and an
-anonymous closure has no name to write, so `jolt.image` would refuse it. That is
-the general rule for images: data travels, and functions travel only when they
-are named. `(image/scan @state)` returns an empty vector here, which is how you
-check a value is writable before trying.
+Nothing in `app/persist.clj` lists what the state consists of. `dump-world!`
+walks the var table and writes every var's root, so adding a new `def` to
+`app.core` tomorrow puts it in the image without touching the saving code.
 
-Restoring the root value is enough to restore the whole UI: the cursors and
-reactions are derived from that one atom, so they recompute and every component
-follows.
+Two things make that affordable on a runtime with no heap dump.
+
+**Code does not travel.** A var holding a function is skipped — the process
+reading the image is the same build and already has every `defn`, protocol impl
+and multimethod. Only data moves.
+
+**What can't be written gets a handler.** glimmer's reactive cells are tagged
+maps holding watch closures, and a reaction holds its body function; an anonymous
+closure has no name to write. So `app.persist` registers a handler that writes a
+cell as its current value, and an after-restore hook re-derives the cursors and
+reactions from the restored root and re-renders. That is the same shape as
+Common Lisp's `*save-hooks*` / `*init-hooks*` pair: quiesce on the way out,
+rebuild on the way in.
+
+## Why this isn't just EDN
+
+The board deliberately holds things a data format cannot carry, so that
+restoring it is a real test rather than a pretty-printed map:
+
+- **`Task` records** come back as `Task`, not as maps — `(instance? Task t)` still
+  holds, so protocol dispatch keeps working.
+- **A live function** sits in `:filter-fn`. The filter buttons store `any?`,
+  `active?` or `done?` *as functions*; after a load the stored one is the same var
+  and is immediately callable.
+- **`:index` shares the very same `Task` objects** as `:tasks`. After a restore
+  `(identical? (get index id) ...)` is still true — one object, two ways in, not
+  two equal copies.
+- **The undo history shares structure** with the boards it came from, and the
+  image preserves that sharing instead of writing N independent copies.
+
+EDN would flatten every one of those: records become maps, the function becomes
+unprintable, and shared objects become duplicates.
 
 ## What else it showcases
 
@@ -60,7 +82,8 @@ follows.
 image-dump-example/
 ├── deps.edn             ; :local/root ../../glimmer inherits its source + GTK4 native libs
 └── src/app/
-    ├── core.clj         ; state, cursors, reactions, mutations, export/import, run
+    ├── core.clj         ; state, cursors, reactions, mutations, run
+    ├── persist.clj      ; save/load the world: the cell handler + the rebuild hook
     └── widgets.clj      ; Form-1 reusable components, incl. the navbar
 ```
 
