@@ -192,7 +192,12 @@
 (defonce status (atom ""))
 
 (defn save-image! [] (reset! status (persist/save!)))
-(defn load-image! [] (reset! status (persist/load!)))
+;; bind the message BEFORE touching status: restore-world! replaces the status
+;; var itself, and (reset! status (persist/load!)) derefs the OLD cell before
+;; load! runs — the confirmation would land on a cell nothing renders anymore.
+(defn load-image! []
+  (let [msg (persist/load!)]
+    (reset! status msg)))
 
 ;; Re-derive the reactive graph after a restore, then re-render.
 (persist/install-rebuild-hook! rebuild-cells!)
