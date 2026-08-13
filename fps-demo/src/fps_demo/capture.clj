@@ -14,19 +14,23 @@
 (def ^:private macos?
   (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "mac"))
 
-;; kCGNullDirectDisplay == 0 selects all displays.
-(def ^:private kCGNullDirectDisplay (int 0))
-
 ;; Load CoreGraphics and bind the two symbols we need. defcfn resolves the C
 ;; entry point when the def runs (at ns load), so the library must be loaded
 ;; first. jolt interns the vars from both if-branches at analysis time, so the
 ;; guarded references below resolve either way; off macOS the branch never runs
 ;; and the no-op guards keep them uncalled. Mirrors jolt.nrepl's socket branch.
+;;
+;; CGAssociateMouseAndMouseCursorPosition takes exactly ONE argument -- per the
+;; SDK header (CGRemoteOperation.h):
+;;     CG_EXTERN CGError CGAssociateMouseAndMouseCursorPosition(boolean_t connected)
+;; It takes no display argument (unlike CGDisplayMoveCursorToPoint); the
+;; association is process-wide. `boolean_t` is a 4-byte Mach int, so :int is the
+;; right width.
 (if macos?
   (do
     (ffi/load-library "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
     (ffi/defcfn ^:private cg-associate
-      "CGAssociateMouseAndMouseCursorPosition" [:uint :int] :int)
+      "CGAssociateMouseAndMouseCursorPosition" [:int] :int)
     (ffi/defcfn ^:private cg-mouse-delta
       "CGGetLastMouseDelta" [:pointer :pointer] :int))
   nil)
@@ -36,13 +40,13 @@
   instead of moving (and clipping at) the cursor. Inert no-op off macOS."
   []
   (when macos?
-    (cg-associate kCGNullDirectDisplay 0)))
+    (cg-associate 0)))
 
 (defn exit!
   "Reassociate the mouse with the cursor (capture released). Inert off macOS."
   []
   (when macos?
-    (cg-associate kCGNullDirectDisplay 1)))
+    (cg-associate 1)))
 
 (defn delta
   "Return [dx dy] (doubles) of mouse motion accumulated since the last call,
