@@ -2,14 +2,14 @@
   "Headless sanity check: confirms the data-defined shader renders to GLSL with
    its declarations generated, the glimmer-gl geometry pipeline produces a
    well-formed vertex buffer for each shape, and the glimmer-gl.gtk extension
-   loads (its :gl-area / :scale widgets register into glimmer). Needs no GL
+   loads (its :gl-area / :scale widgets register into glimmer-gtk). Needs no GL
    context and no display. Run with `jolt -M:check`."
   (:require [clojure.string :as str]
             [gl-demo.scene :as scene]
             [glimmer-gl.shader :as sh]
             [glimmer-gl.primitives :as p]
             [glimmer-gl.mesh :as mesh]
-            [glimmer.widget :as w]
+            [glimmer-gtk.widget :as w]
             [glimmer-gl.gtk]))            ; loading registers the widgets
 
 (defn- check-shape [label m]

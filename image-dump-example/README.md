@@ -3,8 +3,9 @@
 A reactive todo board that saves and reloads **the whole running program** —
 an example of [`jolt.image`](https://jolt-lang.github.io/docs/rfc/0009-program-image-dump-restore.html),
 built with [glimmer](https://github.com/jolt-lang/glimmer), a reagent-style
-reactive GUI toolkit over GTK4 for the [Jolt](https://github.com/jolt-lang/jolt)
-Clojure dialect.
+reactive GUI toolkit for the [Jolt](https://github.com/jolt-lang/jolt) Clojure
+dialect, rendering through its GTK4 backend,
+[glimmer-gtk](https://github.com/jolt-lang/glimmer-gtk).
 
 ## Saving the world
 
@@ -80,7 +81,7 @@ unprintable, and shared objects become duplicates.
 
 ```
 image-dump-example/
-├── deps.edn             ; :local/root ../../glimmer inherits its source + GTK4 native libs
+├── deps.edn             ; :local/root ../../glimmer + ../../glimmer-gtk (source + GTK4 native libs)
 └── src/app/
     ├── core.clj         ; state, cursors, reactions, mutations, run
     ├── persist.clj      ; save/load the world: the cell handler + the rebuild hook

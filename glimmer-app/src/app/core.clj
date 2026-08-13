@@ -22,6 +22,7 @@
   (:require [clojure.string :as str]
             [glimmer.ratom :refer [atom cursor reaction]]
             [glimmer.core :as ui]
+            [glimmer-gtk.core]                  ; installs the GTK4 backend
             [app.widgets :as w]))
 
 (defn- title []

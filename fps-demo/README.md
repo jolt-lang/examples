@@ -92,4 +92,4 @@ jolt -M:check
   feeding Phase 3 combat meshes.
 
 The native libraries — OpenGL (from glimmer-gl) and the GTK4/GLib stack (from
-glimmer) — are pulled in transitively; `deps.edn` only lists the two local deps.
+glimmer-gtk) — are pulled in transitively; `deps.edn` only lists the local deps.
