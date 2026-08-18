@@ -1,0 +1,2 @@
+;; port for the datastar demo server
+{:port 3000}

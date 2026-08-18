@@ -1,0 +1,26 @@
+{:paths ["src" "resources"]
+
+ ;; A minimal datastar demo: the HTTP server is ring-chez-adapter (BSD sockets
+ ;; over jolt.ffi); the datastar middleware is this workspace's own library,
+ ;; referenced by :local/root (it has no git remote yet). jolt expands the
+ ;; local root's deps (glimmer, clojure.data.json, jolt-lang/time) transitively.
+ :deps {jolt-lang/ring-chez-adapter
+        {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
+         :git/tag "v0.3.0"
+         :git/sha "9739fbdcc326f0c95e0ebedb7b4ed9fcdec47070"}
+        jolt-lang/datastar
+        {:local/root "../../datastar"}
+        ;; hiccup 2.0.0 (verified jolt-compatible; see examples/hiccup-app)
+        weavejester/hiccup
+        {:git/url "https://github.com/weavejester/hiccup"
+         :git/sha "b6b12097ba973141fe87c1b4d6a27ddcce5d5929"}}
+
+ ;; `jolt build -m app.core` bakes resources/ (the vendored datastar.js) into
+ ;; the binary.
+ :jolt/build {:embed ["resources"]}
+
+ :aliases {:test {:extra-paths ["test"]
+                 :main-opts   ["-m" "app.core-test"]}}
+
+ :tasks {serve {:doc "run the server" :main-opts ["-m" "app.core"]}
+         test  "jolt -M:test"}}
