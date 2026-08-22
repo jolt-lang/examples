@@ -58,6 +58,7 @@ FFI + runtime. Git deps are fetched once into `~/.jolt/gitlibs`.
 | HTTP server    | git — `jolt-lang/ring-chez-adapter` (BSD sockets via FFI)     |
 | Database       | git — `jolt-lang/db` / `jdbc.core` (libsqlite3 via FFI)       |
 | Middleware     | git — `ring/ring-defaults` (+ ring-core/codec/ssl/headers)    |
+| File uploads   | git — `ring-chez.middleware.multipart` (from the adapter)     |
 | Crypto         | git — `jolt-lang/jolt-crypto` (OpenSSL, for sessions/CSRF)    |
 | Routing        | git — `metosin/reitit` (+ `jolt-lang/router` Trie mirror)     |
 | Templates      | git — `yogthos/Selmer`                                        |
