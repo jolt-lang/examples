@@ -23,9 +23,10 @@
   cljc.java-time, whose namespaces touch java.time.* statics at load time, and
   those resolve only once jolt.time has installed the shim.
 
-  /upload parses multipart/form-data with jolt-lang/multipart. ring's own
-  wrap-multipart-params is written against Apache commons-fileupload, which is
-  JVM-only, so the handler calls that library's API directly."
+  /upload takes multipart/form-data through the adapter's own
+  ring-chez.middleware.multipart. ring's wrap-multipart-params is written
+  against Apache commons-fileupload, which is JVM-only, so ring-defaults' copy
+  stays off and this one wraps the stack instead."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
@@ -33,9 +34,9 @@
             [selmer.parser :as selmer]
             [jolt.crypto]
             [jolt.time]
-            [multipart.core :as multipart]
             [ring.middleware.defaults :as defaults]
             [ring-chez.adapter :as adapter]
+            [ring-chez.middleware.multipart :as multipart]
             [app.db :as db]))
 
 ;; Load reitit + tick under :clj features, then restore — see the ns docstring.
@@ -92,22 +93,23 @@
         echo-handler     (fn [{:keys [params]}]
                            {:status 200 :headers {"Content-Type" "text/plain"}
                             :body (pr-str (into (sorted-map) params))})
-        ;; multipart/form-data: text fields come back in :params, uploads in
-        ;; :files, each with its filename, content type and bytes. ring-defaults
-        ;; leaves :body alone for a content type its own middleware cannot parse,
-        ;; so the stream is still here to read.
-        upload-handler   (fn [request]
-                           (let [{:keys [params files]} (multipart/parse-form-data request)]
+        ;; wrap-multipart-params has already parsed the body: :multipart-params
+        ;; holds every field under its own name, a text field as a string and an
+        ;; upload as {:filename :content-type :bytes :size}. Keys stay strings —
+        ;; wrap-keyword-params only touches :params.
+        upload-handler   (fn [{:keys [multipart-params]}]
+                           (let [file? (fn [[_ v]] (map? v))]
                              {:status 200
                               :headers {"Content-Type" "text/plain"}
                               :body (pr-str
-                                     {:fields (into (sorted-map) params)
+                                     {:fields (into (sorted-map) (remove file?) multipart-params)
                                       :files (into (sorted-map)
-                                                   (map (fn [[k f]]
-                                                          [k {:filename (:filename f)
-                                                              :content-type (:content-type f)
-                                                              :size (alength (:bytes f))}]))
-                                                   files)})}))
+                                                   (comp (filter file?)
+                                                         (map (fn [[k f]]
+                                                                [k {:filename (:filename f)
+                                                                    :content-type (:content-type f)
+                                                                    :size (:size f)}])))
+                                                   multipart-params)})}))
         router           (reitit/router
                           [["/"                {:name :index :get index-handler}]
                            ["/sign"            {:name :sign :post sign-handler}]
@@ -130,14 +132,17 @@
     ;; signs without a CSRF token.
     ;;
     ;; [:params :multipart] is off because ring's wrap-multipart-params is written
-    ;; against Apache commons-fileupload, a JVM library. Leaving it on would have
-    ;; that middleware raise before /upload's handler ever runs; off, the request
-    ;; body reaches the handler and jolt-lang/multipart parses it there.
+    ;; against Apache commons-fileupload, a JVM library — leaving it on would have
+    ;; that middleware raise before /upload's handler ever runs. The adapter's
+    ;; ring-chez.middleware.multipart takes its place, wrapping the whole stack so
+    ;; the body is parsed before ring-defaults' own params middleware sees it. A
+    ;; request that isn't multipart/form-data passes through it untouched.
     (-> handler
         (defaults/wrap-defaults
           (-> defaults/site-defaults
               (assoc-in [:security :anti-forgery] false)
               (assoc-in [:params :multipart] false)))
+        multipart/wrap-multipart-params
         wrap-log)))
 
 ;; --- Integrant components ---------------------------------------------------

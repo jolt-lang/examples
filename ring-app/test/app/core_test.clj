@@ -58,8 +58,9 @@
                         :headers {"content-type" "application/x-www-form-urlencoded"}
                         :body (java.io.StringReader. "a=1&b=2")})))
 
-    ;; multipart/form-data through jolt-lang/multipart: ring's own middleware is
-    ;; off (commons-fileupload is JVM-only), so /upload parses the body itself.
+    ;; multipart/form-data through ring-chez.middleware.multipart: ring's own
+    ;; middleware is off (commons-fileupload is JVM-only), so the adapter's
+    ;; wraps the stack and /upload reads :multipart-params.
     (let [body (str "--BND\r\n"
                     "Content-Disposition: form-data; name=\"title\"\r\n\r\n"
                     "my notes\r\n"
