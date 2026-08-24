@@ -37,6 +37,12 @@ jolt run     # or jolt -M:run
 Nothing to install: the backend binds the ncurses that macOS and every Linux
 already ship, and `deps.edn` pulls glimmer-tui (and glimmer through it) from git.
 
+It does want **jolt 0.7.24 or newer**. Earlier binaries export the ncurses the
+Chez kernel is linked against, which takes priority over the one the backend
+loads, and `initscr` then fails with "Error opening terminal" or segfaults —
+[jolt#728](https://github.com/jolt-lang/jolt/pull/728). Nothing to work around;
+it wants the newer jolt.
+
 | Key | Does |
 |---|---|
 | `Tab` / `Shift-Tab` | move the focus; `Enter` / `Space` press what has it |
