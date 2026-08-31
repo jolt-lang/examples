@@ -23,7 +23,7 @@
   them, all becoming garbage together. `arena` below is that group, in about
   fifteen lines.
 
-  Note the argument order of a write: `(ffi/write pointer type offset value)`,
+  Note the argument order of a write: `(ffi/write pointer type value offset)`,
   offset before value."
   (:require
    [app.native :as native]
@@ -120,8 +120,8 @@
   (let [width (ffi/sizeof :pointer)
         elements (arena-alloc a (* width (inc (count element-types))))]
     (doseq [[i t] (map-indexed vector element-types)]
-      (ffi/write elements :pointer (* width i) t))
-    (ffi/write elements :pointer (* width (count element-types)) ffi/null)
+      (ffi/write elements :pointer t (* width i)))
+    (ffi/write elements :pointer ffi/null (* width (count element-types)))
     (ffi-type a {:size 0 :alignment 0 :code FFI-TYPE-STRUCT :elements elements})))
 
 ;; ffi_cif is opaque and its size is not in the public headers; 128 bytes is
@@ -136,7 +136,7 @@
         atypes (arena-alloc a (max width (* width n)))
         cif (arena-alloc a CIF-BYTES)]
     (doseq [[i t] (map-indexed vector arg-types)]
-      (ffi/write atypes :pointer (* width i) t))
+      (ffi/write atypes :pointer t (* width i)))
     (when-not (zero? (prep-cif cif FFI-DEFAULT-ABI n ret-type atypes))
       (throw (ex-info "ffi_prep_cif failed" {:args n})))
     cif))
@@ -158,10 +158,10 @@
             avalues (arena-alloc a (* 2 width))
             rvalue (arena-alloc a 8)]
         ;; avalues is an array of POINTERS TO the arguments, not the arguments.
-        (ffi/write avalues :pointer 0 a0)
-        (ffi/write avalues :pointer width a1)
-        (ffi/write a0 :int 0 numer)
-        (ffi/write a1 :int 0 denom)
+        (ffi/write avalues :pointer a0 0)
+        (ffi/write avalues :pointer a1 width)
+        (ffi/write a0 :int numer 0)
+        (ffi/write a1 :int denom 0)
         (ffi-call cif (sym-addr "div") rvalue avalues)
         {:quot (ffi/read rvalue :int 0)
          :rem (ffi/read rvalue :int 4)}))))
@@ -185,16 +185,16 @@
             a1 (arena-alloc a (ffi/sizeof :int))
             avalues (arena-alloc a (* 2 width))
             rvalue (arena-alloc a 8)]
-        (ffi/write avalues :pointer 0 a0)
-        (ffi/write avalues :pointer width a1)
-        (ffi/write a0 :double 0 1.5)
-        (ffi/write a1 :int 0 3)
+        (ffi/write avalues :pointer a0 0)
+        (ffi/write avalues :pointer a1 width)
+        (ffi/write a0 :double 1.5 0)
+        (ffi/write a1 :int 3 0)
         (ffi-call cif fnp rvalue avalues)
         (println "ldexp(1.5, 3) via libffi =" (ffi/read rvalue :double 0))
         (let [t0 (System/nanoTime)]
           (dotimes [i N]
-            (ffi/write a0 :double 0 1.5)
-            (ffi/write a1 :int 0 i)
+            (ffi/write a0 :double 1.5 0)
+            (ffi/write a1 :int i 0)
             (ffi-call cif fnp rvalue avalues)
             (ffi/read rvalue :double 0))
           (println "  libffi, runtime cif    "
@@ -220,7 +220,7 @@
   (let [t0 (System/nanoTime)]
     (dotimes [i M]
       (ffi/with-alloc [p (ffi/sizeof :int)]
-        (ffi/write p :int 0 i)
+        (ffi/write p :int i 0)
         (ffi/read p :int 0)))
     (println "  alloc/free per iteration"
              (quot (- (System/nanoTime) t0) M) "ns")))
@@ -230,7 +230,7 @@
   (ffi/with-alloc [p (ffi/sizeof :int)]
     (let [t0 (System/nanoTime)]
       (dotimes [i M]
-        (ffi/write p :int 0 i)
+        (ffi/write p :int i 0)
         (ffi/read p :int 0))
       (println "  one buffer, reused      "
                (quot (- (System/nanoTime) t0) M) "ns"))))
