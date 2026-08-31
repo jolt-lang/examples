@@ -21,7 +21,13 @@
             [glimmer.core :as ui]
             [jolt.image :as jimg]))
 
-(def image-path "todos.jimg")
+(def image-path
+  ;; Resolve against the PROJECT directory, not the process cwd. The dev
+  ;; launcher (jolt/bin/jolt) cd's to the jolt checkout so the runtime's
+  ;; relative loads work and passes the original directory as JOLT_PWD; a bare
+  ;; "todos.jimg" would land in the jolt repo there. The release binary runs
+  ;; without the cd and without JOLT_PWD, so "." is already the project dir.
+  (str (or (System/getenv "JOLT_PWD") ".") "/todos.jimg"))
 
 (defn reactive-cell? [x]
   (and (map? x) (contains? x :glimmer/kind)))
