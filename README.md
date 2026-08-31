@@ -31,6 +31,11 @@ Chez's FFI.
 - [malli-app](malli-app/) — [metosin/malli](https://github.com/metosin/malli)
   schema validation, pulled from git. `m/validate`/`m/explain` across the schema
   vocabulary (predicates, `:map`, `:vector`, `:enum`, bounded `:int`, …).
+- [ffi-examples](ffi-examples/) — three programs calling C libraries directly
+  over their ABI with `jolt.ffi`: libc's `div()` returning a struct by value,
+  libffi driven through jolt.ffi so a call's signature can be built at runtime,
+  and an arpeggio from a PortAudio realtime audio callback. `jolt check`,
+  `jolt structs`, `jolt libffi`, `jolt portaudio`.
 - [nrepl-example](nrepl-example/) — a jolt app that starts an nREPL server and
   parks, so you can connect an editor and drive the live process (inspect state,
   mutate it, reload code). The shape of a binary deployed to, say, a Raspberry Pi
