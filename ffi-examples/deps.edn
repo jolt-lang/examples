@@ -1,0 +1,41 @@
+;; Three programs that call a C library directly over its ABI through jolt.ffi.
+;;
+;; A shared library is declared here, not in the source: a `:jolt/native` entry
+;; is dlopen'd RTLD_LOCAL before any namespace is required, and the project's
+;; defcfns resolve against THAT handle rather than the process-global namespace,
+;; so a same-named symbol elsewhere on the machine cannot be picked up instead.
+;;
+;; Both entries are `:optional true` — a required native that cannot be found
+;; aborts the process before anything runs, and PortAudio in particular is not
+;; installed everywhere. Each example checks its own library instead
+;; (app.native/need!) and prints how to install it. `jolt check` reports what
+;; this machine has.
+;;
+;; app.structs needs no entry at all: libc is already in the process.
+{:paths ["src"]
+
+ :jolt/native
+ [;; libffi ships with macOS and with essentially every Linux distribution.
+  {:name "ffi" :optional true
+   :darwin ["libffi.dylib" "/opt/homebrew/opt/libffi/lib/libffi.dylib"]
+   :linux  ["libffi.so.8" "libffi.so.7" "libffi.so.6" "libffi.so"]
+   :windows ["libffi-8.dll" "libffi-7.dll"]}
+
+  {:name "portaudio" :optional true
+   :darwin ["/opt/homebrew/lib/libportaudio.2.dylib" "libportaudio.2.dylib"]
+   :linux  ["libportaudio.so.2" "libportaudio.so"]
+   :windows ["portaudio.dll"]}]
+
+ :aliases {:check     {:main-opts ["-m" "app.check"]}
+           :structs   {:main-opts ["-m" "app.structs"]}
+           :libffi    {:main-opts ["-m" "app.libffi"]}
+           :portaudio {:main-opts ["-m" "app.portaudio"]}}
+
+ :tasks {check     {:doc "load every example and report which libraries are present"
+                    :main-opts ["-m" "app.check"]}
+         structs   {:doc "libc div() returning a struct by value, benchmarked"
+                    :main-opts ["-m" "app.structs"]}
+         libffi    {:doc "call a function through a signature built at runtime"
+                    :main-opts ["-m" "app.libffi"]}
+         portaudio {:doc "an arpeggio from a realtime audio callback"
+                    :main-opts ["-m" "app.portaudio"]}}}
