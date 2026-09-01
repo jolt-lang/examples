@@ -5,6 +5,6 @@
  ;; them transitively. clj-http-lite is pulled in by the library.
  :deps {jolt-lang/http-client
         {:git/url "https://github.com/jolt-lang/http-client"
-         :git/sha "af407efe3006febcb561bc1ac6a393c6bad6f41c"}}
+         :git/sha "177b1ce4e529ffe052e6a1b7b103ed924de535f6"}}
 
  :tasks {run {:doc "hit some real HTTPS endpoints" :main-opts ["-m" "app.core"]}}}
