@@ -6,8 +6,8 @@
  ;; local root's deps (glimmer, clojure.data.json, jolt-lang/time) transitively.
  :deps {jolt-lang/ring-chez-adapter
         {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-         :git/tag "v0.3.0"
-         :git/sha "9739fbdcc326f0c95e0ebedb7b4ed9fcdec47070"}
+         :git/tag "v0.7.2"
+         :git/sha "4d2548c035c082eb02e27fb8358517f0bb5b65da"}
         jolt-lang/datastar
         {:local/root "../../datastar"}
         ;; hiccup 2.0.0 (verified jolt-compatible; see examples/hiccup-app)
