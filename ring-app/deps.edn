@@ -13,7 +13,8 @@
              :git/tag "v0.7.2"
              :git/sha "4d2548c035c0"}
          jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
-                       :git/sha "f368b122ab2f736feea55e99a0faa538c40d4acc"}
+                       :git/tag "v0.4.0"
+                       :git/sha "d85f391ca521da389b935c38f3d78b30eaa23208"}
          ;; crypto (AES/HMAC/SecureRandom over OpenSSL) so ring-defaults' session
          ;; + CSRF middleware loads. Shared with http-client; jolt.deps reconciles
          ;; the duplicate libssl/libcrypto natives to a single load.
