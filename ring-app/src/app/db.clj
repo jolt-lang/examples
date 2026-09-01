@@ -1,7 +1,12 @@
 (ns app.db
-  "Guestbook storage: SQLite through jolt's built-in jdbc.core (the jolt-lang/db
-  API over the system libsqlite3 via FFI), queries written as honeysql data."
-  (:require [jdbc.core :as jdbc]
+  "Guestbook storage: SQLite through clojure.jdbc, which the jolt-lang/db library
+  runs on a java.sql shim over the system libsqlite3 via FFI. Queries are written
+  as honeysql data."
+  ;; db.jdbc registers the java.sql shim clojure.jdbc compiles against and points
+  ;; connection construction at the native driver, so it has to load before
+  ;; jdbc.core.
+  (:require [db.jdbc]
+            [jdbc.core :as jdbc]
             [honey.sql :as sql]))
 
 (defn connect
@@ -18,9 +23,9 @@
     conn))
 
 (defn add-greeting! [conn name]
-  (jdbc/execute! conn (sql/format {:insert-into :greetings
-                                   :values [{:name name}]}))
-  (jdbc/last-insert-id conn))
+  ;; clojure.jdbc has no last-insert-id: the generated key comes back from the
+  ;; insert itself when :returning is asked for.
+  (:id (first (jdbc/insert! conn :greetings {:name name} {:returning true}))))
 
 (defn recent-greetings [conn n]
   (jdbc/fetch conn (sql/format {:select [:name :created-at]
