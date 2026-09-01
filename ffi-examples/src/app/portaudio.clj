@@ -75,7 +75,7 @@
       (if (< i n)
         (do
           ;; float32 samples, four bytes apart, written where PortAudio asked.
-          (ffi/write output :float (* i 4) (* AMPLITUDE (Math/sin p)))
+          (ffi/write output :float (* AMPLITUDE (Math/sin p)) (* i 4))
           (recur (inc i)
                  (let [p (+ p step)]
                    (if (> p TAU) (- p TAU) p))))

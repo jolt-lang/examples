@@ -124,7 +124,7 @@
                 vert-buf (ffi/alloc (* nfloats 4))]
             (loop [s (seq out-verts) i 0]
               (when s
-                (ffi/write vert-buf :float (* i 4) (double (first s)))
+                (ffi/write vert-buf :float (double (first s)) (* i 4))
                 (recur (next s) (inc i))))
             {:verts out-verts :vert-buf vert-buf :frames frame-offs
              :stride stride :num-verts (* num-indices 3)

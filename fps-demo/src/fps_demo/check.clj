@@ -935,7 +935,7 @@
                        (recur (inc i) (+ sum (double (nth pv (mod (* i 31) n)))))))
                  (- (System/nanoTime) t0))
         nb     (let [p (ffi/alloc (* n (ffi/sizeof :float)))]
-                 (dotimes [i n] (ffi/write p :float (* i 4) (double i)))
+                 (dotimes [i n] (ffi/write p :float (double i) (* i 4)))
                  p)
         t-nb   (let [t0 (System/nanoTime)]
                  (loop [i 0 sum 0.0]
