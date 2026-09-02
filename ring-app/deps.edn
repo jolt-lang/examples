@@ -13,7 +13,7 @@
              :git/tag "v0.7.2"
              :git/sha "4d2548c035c0"}
          jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
-                       :git/sha "102b0011f2e680e6d9d413db196949284185d9ad"}
+                       :git/sha "a54cc49f9ee8b6f6b0a1dd4f695a5390fedb5bfc"}
          ;; crypto (AES/HMAC/SecureRandom over OpenSSL) so ring-defaults' session
          ;; + CSRF middleware loads. Shared with http-client; jolt.deps reconciles
          ;; the duplicate libssl/libcrypto natives to a single load.
@@ -48,7 +48,7 @@
          weavejester/dependency {:mvn/version "0.2.1"}
          meta-merge/meta-merge {:mvn/version "1.0.0"}
          jolt-lang/router {:git/url "https://github.com/jolt-lang/router"
-                           :git/sha "d35a08560fd2b84faa5e4e1de3f0fb59fa6ce90f"
+                           :git/sha "1056e782a80ee8cf54276f639f97811b619bbc47"
                            :exclusions [weavejester/meta-merge]}
          ;; tick date/time (over jolt's java.time) + its cljc.java-time / time-
          ;; literals deps; needs JOLT_FEATURES "clj" for the :clj reader branches.
@@ -62,7 +62,7 @@
          ;; clojure.tools.logging ported to jolt (stderr backend; :info+ by default)
          org.clojure/tools.logging
            {:git/url "https://github.com/jolt-lang/logging"
-            :git/sha "7e26daaf4b91df3076c4c0342d0270fc962fca27"}
+            :git/sha "ec6747e55583118d881faf4ab41e68d7e587ce4c"}
          ;; nREPL middleware — sessions, interruptible-eval, completions, lookup,
          ;; and the cider-nrepl op set (info, complete, test, …) editors expect
          jolt-lang/nrepl {:git/url "https://github.com/jolt-lang/nrepl"
@@ -80,7 +80,7 @@
                   ;; the test drives the running server with jolt.http-client
                   :extra-deps {jolt-lang/http-client
                                {:git/url "https://github.com/jolt-lang/http-client"
-                                :git/sha "177b1ce4e529ffe052e6a1b7b103ed924de535f6"}}
+                                :git/sha "f0c675da0a6c8230952f72d834847ccdb5a3a59e"}}
                   :main-opts ["-m" "app.core-test"]}}
 
   :tasks {serve {:doc "run the server" :main-opts ["-m" "app.core"]}
