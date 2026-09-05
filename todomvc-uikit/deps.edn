@@ -9,8 +9,8 @@
                                  :git/tag "v0.1.0"
                                  :git/sha "5581c331c51aff989259b9e8e92ec920fe5e6741"}
         jolt-lang/glimmer-uikit {:git/url "https://github.com/jolt-lang/glimmer-uikit"
-                                 :git/tag "v0.1.0"
-                                 :git/sha "693b257d7ac9681a4e3cc94eca0b2f93b41c5c0e"}}
+                                 :git/tag "v0.1.1"
+                                 :git/sha "8e8623caaa8eebcaee9c4e12dcff94a14e2bd266"}}
 
  ;; `jolt -M:run` (or the `run` task) opens the window and blocks until it's
  ;; closed. `jolt build` compiles a standalone binary; AppKit ships with macOS,
