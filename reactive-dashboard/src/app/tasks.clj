@@ -48,8 +48,8 @@
 
 (defn- deliver-once
   "The notification sink: a task that takes a moment and sometimes refuses.
-  The failure rate is a control on the dashboard, so retries are demonstrable
-  on purpose rather than by luck."
+  The failure rate is a control on the dashboard, so retries can be exercised
+  deterministically."
   [level attempt]
   (m/sp
     (m/? (m/sleep 150))
@@ -112,10 +112,9 @@
 (defn export-task
   "Write the retained history to disk in chunks.
 
-  The chunking is what makes cancellation meaningful: the task parks between
-  chunks, so a cancel actually lands mid-write. It writes to a `.part` file
-  and renames on success, so a cancelled export can never leave a partial file
-  behind claiming to be an export."
+  The task parks between chunks, so a cancel lands mid-write and the file is
+  still consistent: it writes to a `.part` file and renames on success, so a
+  cancelled export never leaves a partial file under the final name."
   [dir]
   (m/sp
     (let [rows  (vec (csv-rows (:history (state/db))))
@@ -136,8 +135,8 @@
                 (let [written (+ written (count chunk))]
                   (state/transact! [[[:export] {:state :running :path path
                                                 :written written :total total}]])
-                  ;; the pause a real export would spend on IO -- and the point
-                  ;; at which a cancel can be observed
+                  ;; the pause a real export would spend on IO -- and the
+                  ;; point where a cancel becomes observable
                   (m/? (m/sleep 250))
                   (recur (drop 20 remaining) written)))
               nil)))
@@ -157,10 +156,10 @@
 ;; ------------------------------------------------------- the load generator
 
 (def ^:private spinner-script
-  ;; A spinner writes nowhere, so it cannot notice us dying through a broken
-  ;; pipe like the producers do. Instead it holds our stdin pipe open and waits
-  ;; on it: when this process exits the pipe reaches EOF, `read` returns and
-  ;; the wrapper kills the load it started. No dependence on shutdown hooks.
+  ;; A spinner writes nothing, so unlike the producers it gets no EPIPE when
+  ;; this process dies. It instead holds our stdin pipe open and waits on it:
+  ;; when we exit the pipe reaches EOF, `read` returns, and the wrapper kills
+  ;; the load it started. No dependence on shutdown hooks.
   "yes > /dev/null & p=$!; read -r _ || true; kill $p 2>/dev/null")
 
 (defn- spawn-spinner! []
@@ -169,8 +168,9 @@
              "bash" "-c" spinner-script))
 
 (defn set-burst!
-  "Match the number of running spinners to `n`. Real processes burning real
-  cycles: the CPU the dashboard then reports is not simulated."
+  "Match the number of running spinners to `n`. These are real processes
+  consuming real CPU, so the load the dashboard then reports is not
+  simulated."
   [n]
   (let [n       (max 0 (min 8 (or n 0)))
         current (count @spinners)]
@@ -232,9 +232,9 @@
 (defn- drain-task
   "Take one request at a time and handle it before taking the next.
 
-  Deliberately an `m/sp` loop rather than an `m/ap` over the mailbox: with
-  `m/amb` the branches overlap, and a supervisor that can process a recovery
-  before the alert it is meant to supersede is a supervisor with a race in it."
+  An `m/sp` loop rather than `m/ap` over the mailbox: `m/amb` branches
+  overlap, and a supervisor that can process a recovery before the alert it
+  is meant to supersede has a race in it."
   [config]
   (m/sp
     (loop []

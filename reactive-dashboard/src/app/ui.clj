@@ -1,7 +1,7 @@
 (ns app.ui
   "Rendering. Every function here is a pure function of the Domino db (plus the
-  event log), which is the whole point: no component owns state, and the SSE
-  stream re-renders this same markup whenever the model changes."
+  event log): no component owns state, and the SSE stream re-renders this same
+  markup whenever the model changes."
   (:require [clojure.string :as str]
             [hiccup.core :as h]
             [jolt.datastar.core :as ds]
@@ -356,8 +356,8 @@ button.danger{border-color:var(--crit);color:var(--crit)}
 
 (defn page
   "The full document. init-opts seeds the datastar signals (slider positions
-  and the selected tab, which are per-tab UI state the server has no business
-  owning) and opens the SSE stream on #app."
+  and the selected tab -- per-tab UI state that belongs on the client, not in
+  the model) and opens the SSE stream on #app."
   []
   (let [{:keys [controls burst]} (:db @state/view)
         opts (ds/init-opts

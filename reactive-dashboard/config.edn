@@ -1,8 +1,8 @@
 ;; Live pipeline dashboard. Read at runtime, so it stays next to the binary.
 {:port 3000
 
- ;; Lane C (polled): how often the /proc sampler ticks. procfs has no push, so
- ;; this lane polls and the UI says so.
+ ;; Lane C: how often the /proc sampler ticks. procfs has no push, so this
+ ;; lane polls on a timer.
  :sample-interval-ms 500
 
  ;; how many samples the derived-stat window keeps
@@ -16,7 +16,7 @@
  :warn-threshold 0.55
  :crit-threshold 0.85
 
- ;; the notification sink fails this often, so retries are demonstrable
+ ;; fraction of alert deliveries the sink rejects, for exercising retries
  :alert-sink-failure-rate 0.4
  :alert-max-attempts 5
 

@@ -14,7 +14,7 @@
                              producer itself stalls.
     lane C  polled           /proc read on a timer. procfs materializes its
                              files on read, so there is no push to subscribe
-                             to and this lane is honestly a poll loop.
+                             to and this lane is a poll loop.
 
   Lane C is the dashboard's metric source: it transacts `[:sample]` and the
   Domino cascade does the rest. Lanes A and B carry the same kind of data but
@@ -24,7 +24,7 @@
   Cancellation is real in both directions. `m/observe`'s cleanup destroys the
   child process; for the pull lane, cancelling cannot interrupt a thread
   already parked in `.readLine`, so `stop-lane!` destroys the process itself
-  to release it. That asymmetry is the point of showing both."
+  to release it."
   (:require [ebb.core :as m]
             [babashka.process :as p]
             [clojure.java.io :as io]
@@ -40,9 +40,9 @@
 ;; process per sample; only `sleep` costs a fork.
 (def producer-script
   ;; `|| exit 0` is the orphan guard: once our end of the pipe is gone the echo
-  ;; fails with EPIPE and the producer leaves rather than looping forever
-  ;; printing broken-pipe errors. It covers the exits a shutdown hook does not
-  ;; -- and on this jolt the hook does not run on SIGINT at all.
+  ;; fails with EPIPE and the producer exits instead of looping forever on
+  ;; broken-pipe errors. It covers the exits a shutdown hook does not -- and on
+  ;; this jolt the hook does not run on SIGINT at all.
   "i=0; while :; do i=$((i+1)); read -r line < /proc/stat; echo \"$i $line\" || exit 0; sleep 0.02; done")
 
 (def producer-hz 50)
@@ -73,9 +73,9 @@
 ;; ------------------------------------------------------------- the producer
 
 (defn- spawn-producer! [k]
-  ;; stderr goes nowhere on purpose: when a lane is cancelled the reader closes
-  ;; and the producer's next echo dies with EPIPE, which is the mechanism
-  ;; working rather than something worth printing.
+  ;; stderr is discarded: when a lane is cancelled the reader closes and the
+  ;; producer's next echo dies with EPIPE, which is expected behaviour and not
+  ;; worth logging.
   (let [proc (p/process {:out :stream :err :write :err-file (io/file "/dev/null")}
                         "bash" "-c" producer-script)]
     (swap! lanes assoc-in [k :proc] proc)
@@ -95,8 +95,8 @@
 
 (defn- observed-lines
   "A flow of producer lines, pushed from a reader thread. `m/observe` has no
-  backpressure of its own -- an unrelieved consumer would fail -- which is
-  exactly why the caller pairs it with `m/relieve`."
+  backpressure of its own -- an unrelieved consumer would fail -- so the
+  caller pairs it with `m/relieve`."
   [k produced]
   (m/observe
    (fn [!]
@@ -123,8 +123,8 @@
   (let [source (m/relieve (fn [_ x] x) (observed-lines :a produced))]
     (m/ap
      (let [line (m/?> source)]
-       ;; the simulated render cost: parking here is what makes the relieve
-       ;; upstream start collapsing values
+       ;; the simulated render cost: parking here lets the upstream relieve
+       ;; collapse values
        (when (pos? @consumer-delay-ms)
          (m/? (m/sleep @consumer-delay-ms)))
        (swap! delivered inc)
@@ -214,8 +214,8 @@
 (defn stop-lane!
   "Cancel the lane and reap its child.
 
-  Both halves matter: cancelling releases the flow, but a thread parked in
-  `.readLine` only wakes when the process it is reading from goes away."
+  Both steps are needed: cancelling releases the flow, but a thread parked
+  in `.readLine` only wakes when the process it is reading from goes away."
   [k]
   (when-let [{:keys [cancel proc]} (lane k)]
     (when cancel (cancel))
@@ -256,7 +256,8 @@
               (fn [res] (state/transact! [[[:probe] res]]))))))
 
 (defn retune-lane-c!
-  "Changing the interval is a restart, not a flag flip."
+  "Changing the interval restarts the lane rather than setting a flag the
+  loop checks."
   [interval-ms]
   (state/log! :ebb (str "lane c: retune to " interval-ms "ms -- cancel and respawn"))
   (stop-lane! :c)

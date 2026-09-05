@@ -2,9 +2,9 @@
   "The HTTP edge and the boot sequence.
 
   Routes do one of two things: transact a control change into Domino (and let
-  the effects decide what that means), or ask the supervisor for something
-  imperative like cancelling an in-flight export. Nothing here computes
-  anything about the dashboard itself."
+  the effects act on it downstream), or forward a command to the supervisor,
+  such as cancelling an in-flight export. The dashboard's own logic lives in
+  `app.state`."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [hiccup.core :as h]
@@ -45,8 +45,8 @@
 ;; ------------------------------------------------------------------- routes
 
 (defn- control-route
-  "Every slider lands here: coerce, transact, and let Domino's effects turn the
-  change into whatever the ingestion or task layer has to do about it."
+  "Every slider lands here: coerce, transact, and let Domino's effects act on
+  the change downstream."
   [path signal value]
   (state/transact! [[path value]])
   (patch {signal value}))
@@ -128,9 +128,9 @@
         port    (:port cfg 3000)
         _       (start! cfg)
         handler (ds/wrap-datastar app {:rate-limit-ms 100})
-        ;; :fibers rather than the default thread-per-connection: every open
-        ;; dashboard holds an SSE stream for as long as the tab is open, and a
-        ;; worker pool would be fully subscribed by a handful of viewers.
+         ;; :fibers rather than the default thread-per-connection: each open
+         ;; tab holds an SSE stream until it closes, and a worker pool would
+         ;; be fully subscribed by a handful of viewers.
         server  (adapter/run-server handler {:port port :strategy :fibers})]
     (println (str "live pipeline dashboard on http://127.0.0.1:" port))
     (jolt.host/add-shutdown-hook (fn [] (stop!) (adapter/stop-server server)))

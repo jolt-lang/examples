@@ -2,8 +2,8 @@
   "Pure parsers for the raw text the ingestion lanes carry.
 
   Nothing in here does IO. Every fn takes text (or two snapshots of it) and
-  returns data, which is what makes the ingestion layer testable against
-  fixtures instead of against the machine it happens to run on."
+  returns data, so the ingestion layer can be tested against fixtures rather
+  than against the machine it runs on."
   (:require [clojure.string :as str]))
 
 (defn- nums
@@ -62,8 +62,8 @@
 
 (defn parse-meminfo
   "/proc/meminfo text -> the few fields the dashboard shows, in kB, plus the
-  used fraction. Used is total minus available, the number `free -h` calls
-  used, rather than total minus free -- page cache is not pressure."
+  used fraction. Used is total minus available (the number `free -h` reports),
+  not total minus free -- page cache is not memory pressure."
   [text]
   (let [kv (into {} (for [line (str/split-lines text)
                           :let [[k v] (str/split line #":\s*")]
@@ -95,7 +95,7 @@
 (defn net-rates
   "Two `parse-netdev` snapshots and the gap between them -> bytes per second,
   per interface plus a total across all of them. Loopback is excluded from the
-  total: it is real traffic but it is not the network."
+  total: it is real traffic, but it does not traverse the network."
   [prev cur dt-ms]
   (let [dt (max (or dt-ms 0) 1)
         per (into {}

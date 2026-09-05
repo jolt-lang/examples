@@ -32,9 +32,9 @@
      handlers)))
 
 (defn depths
-  "Longest-path depth per node. Cycles cannot happen in a domino event graph
-  (it is a DAG by construction), but the iteration is bounded anyway so a
-  malformed schema draws something rather than hanging."
+  "Longest-path depth per node. Domino event graphs are acyclic by
+  construction, but the iteration is bounded anyway, so a malformed schema
+  draws a partial picture rather than hanging."
   [{:keys [nodes edges]}]
   (let [preds (reduce (fn [m [from to]] (update m to (fnil conj #{}) from)) {} edges)]
     (loop [depth (zipmap (keys nodes) (repeat 0))
@@ -85,7 +85,7 @@
      :height height}))
 
 (defn mermaid
-  "The same graph as mermaid source, for pasting somewhere that renders it."
+  "The same graph as mermaid source, for rendering elsewhere."
   [schema]
   (let [{:keys [edges]} (graph schema)]
     (str/join "\n"

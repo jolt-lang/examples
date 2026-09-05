@@ -17,8 +17,8 @@
      `:record-history`, which is keyed on the sample's timestamp, and
      `:classify-alert`, which only appends on an actual transition. The sample
      itself is one model path holding one map, so ingestion is one change.
-  2. Effects run only when their inputs actually changed, which is what makes
-     `:announce-alert` fire on transitions instead of on every sample.
+  2. Effects run only when their inputs actually changed, so `:announce-alert`
+     fires on transitions instead of on every sample.
   3. Interceptors are collected from an event's :inputs, so a :pre/:post on a
      model path wraps the events that READ that path, not the ones that write
      it.
@@ -54,18 +54,18 @@
 
 (defn- clamp-pressure
   "A :post interceptor, hung on [:stats] because that is what
-  `:compute-pressure` reads. The weights are meant to sum to 1, but a composite
-  index is exactly the kind of number that quietly drifts out of range when
-  someone retunes it, so the model itself keeps it in [0,1]."
+   `:compute-pressure` reads. The weights are meant to sum to 1, but a
+   composite index tends to drift out of range once it is retuned a few
+   times, so the model itself keeps it in [0,1]."
   [handler]
   (fn [result]
     (handler (update result :pressure clamp))))
 
 (defn- unless-muted
   "A :pre interceptor, hung on [:pressure] because that is what
-  `:classify-alert` reads. Returning nil short-circuits the handler, so the
-  alert level simply stops moving while muted -- enforced by the model rather
-  than by every caller remembering to check."
+   `:classify-alert` reads. Returning nil short-circuits the handler, so the
+   alert level stops moving while muted -- enforced by the model rather
+   than left to every caller to check."
   [handler]
   (fn [ctx inputs outputs]
     (when-not (get-in ctx [::domino/db :controls :muted?])
@@ -153,10 +153,10 @@
                              (* 0.10 (get-in stats [:io-wait :last] 0.0)))})}
 
    {:id      :classify-alert
-    :doc     "Pressure against the two thresholds. Deliberately blind to the
-              sample: an input that changes earlier in the cascade would make
-              the engine re-run this handler with a stale pressure and clobber
-              the level it just computed."
+    :doc     "Pressure against the two thresholds. Takes no :sample input:
+              one would make the engine re-run this handler with a stale
+              pressure after the cascade advanced and clobber the level it
+              just computed."
     :inputs  [:pressure :warn-threshold :crit-threshold]
     :outputs [:alert-level]
     :handler (fn [_ {:keys [pressure warn-threshold crit-threshold]} _]
@@ -262,11 +262,12 @@
 ;; out of the notify path -- measured here as "Exception in fork-thread:
 ;; failed: Resource temporarily unavailable" after 50 dead watchers and a few
 ;; thousand writes. Ingestion writes far more often than any browser can
-;; render, so it has no business paying that cost: the pipeline writes to the
+;; render, so it should not pay that cost: the pipeline writes to the
 ;; atom at whatever rate the machine produces samples, and the publisher
 ;; mirrors a consistent snapshot to the view at a rate a browser can absorb.
 
-(defonce ^{:doc "Authoritative domino context. Not reactive on purpose."}
+(defonce ^{:doc "Authoritative domino context. Kept non-reactive; see the
+  comment block above."}
   ctx (atom nil))
 
 (defonce ^:private log-entries (atom []))
@@ -306,10 +307,10 @@
 (defn transact!
   "Serialize a transaction against the live context.
 
-  Several ebb lanes plus the request threads all write here, so the lock is
-  doing real work. Effects fire inside `domino/transact`, and their requests
+  Several ebb lanes plus the request threads all write here, so the lock
+  matters. Effects fire inside `domino/transact`, and their requests
   are collected rather than posted: posting drives the supervisor fiber inline
-  and it would immediately ask for this very lock. They go out below, once the
+  and it would immediately ask for the same lock. They go out below, once the
   lock is released. See `app.bus`."
   [changes]
   (let [pending (atom [])

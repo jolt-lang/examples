@@ -7,9 +7,9 @@
 
   One rule governs how that post happens, and it comes from ebb's ADR-001: a
   mailbox post hands the value straight to a waiting consumer and DRIVES that
-  process until it parks again, on the posting thread. So a post is not a
-  fire-and-forget send -- it runs the supervisor's next step inline, and if
-  that step needs a lock the poster is holding, both sides stop forever.
+  process until it parks again, on the posting thread. A post is therefore not
+  a fire-and-forget send -- it runs the supervisor's next step inline, and if
+  that step needs a lock the poster is holding, both sides deadlock.
 
   Effects run inside `app.state/transact!`, which holds the write lock, and
   supervisor handlers routinely transact. So during a transaction `request!`

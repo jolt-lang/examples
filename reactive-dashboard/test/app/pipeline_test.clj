@@ -16,8 +16,8 @@
 (defn- pause [ms] (m/? (m/sleep ms)))
 
 (defn- alive?
-  "Is this specific pid still around? Scoped to the pid on purpose: counting
-  producers system-wide picks up any dashboard running in another terminal."
+  "Is this specific pid still around? Scoped to the pid: counting producers
+  system-wide picks up any dashboard running in another terminal."
   [pid]
   (zero? (:exit (babashka.process/shell {:out :string :err :string :continue true}
                                         "kill" "-0" (str pid)))))
