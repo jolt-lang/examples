@@ -23,8 +23,9 @@ Open the page and you'll find a sparkline per metric, a pressure gauge, an
 alert banner and a rail of controls along the bottom. Four panels sit on the
 right. **Lanes** reports what each ingestion lane is up to, **Cascade** lists
 the paths the last transaction wrote in execution order, **Model** draws the
-event graph straight from the schema, and **Log** interleaves domino
-transactions with ebb task lifecycle so the plumbing stays visible. That same
+event graph straight from the schema and lets you drag along it or scroll to
+zoom, then **Log** interleaves domino transactions with ebb task lifecycle so
+the plumbing stays visible. That same
 graph is served as mermaid source at `/model.mmd`.
 
 ## What it demonstrates

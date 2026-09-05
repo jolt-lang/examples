@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "reactive_dashboard",
+  "project_id": "fbb0d60d-0d35-4fd6-b992-56d86117a5ce"
+}

@@ -38,6 +38,40 @@
       (is (str/includes? html "export snapshot"))
       (is (str/includes? html "/lanes/a/toggle")))))
 
+(deftest the-stream-render-leaves-the-static-parts-alone
+  (let [page (render)
+        live (do (state/publish!) (h/html (ui/fragment true)))]
+    (testing "the schema diagram is drawn once, for the page"
+      (is (str/includes? page "class=\"node event\""))
+      (is (not (str/includes? live "class=\"node event\"")))
+      (is (< (count live) (count page))
+          "so a patch carries kilobytes less than the first render"))
+    (testing "and the block the morph skips is still there to be skipped"
+      (is (str/includes? live "data-ignore-morph"))
+      (is (str/includes? live "class=\"diagram\"")))))
+
+(deftest sliders-are-owned-by-the-client
+  (let [html (render)]
+    (testing "a re-render arriving mid-drag must not morph the row"
+      (is (= 7 (count (re-seq #"class=\"control\" data-ignore-morph" html)))))
+    (testing "the readout comes from the signal, so it renders empty"
+      (is (str/includes? html "<output data-text=\"$window\"></output>")))
+    (testing "and dragging sends one request when the thumb settles"
+      (is (str/includes? html "data-on:input__debounce.200ms"))
+      (is (not (str/includes? html "data-on:change"))))))
+
+(deftest the-diagram-can-be-moved
+  (let [html (render)]
+    (is (str/includes? html "$dzoom"))
+    (is (str/includes? html "data-attr-transform"))
+    (testing "zoom stays within bounds a viewer can recover from"
+      (is (str/includes? html "Math.max(0.25"))
+      (is (str/includes? html "Math.min(4")))
+    (testing "and the page seeds the signals the transform reads"
+      (let [page (ui/page)]
+        (is (str/includes? page "dzoom"))
+        (is (str/includes? page "ddrag"))))))
+
 (deftest the-fragment-reflects-the-model
   (testing "alert level reaches the banner"
     (is (str/includes? (render) "OK"))
