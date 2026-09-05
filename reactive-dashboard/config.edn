@@ -22,7 +22,7 @@
 
  ;; how often the model is mirrored into the render cell (the model itself is
  ;; written whenever a sample lands, which is faster than any browser needs)
- :publish-hz 10
+ :publish-hz 4
 
  ;; where cancellable exports are written
  :export-dir "target/exports"}

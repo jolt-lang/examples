@@ -139,31 +139,71 @@
       [:span.txt text]
       [:span.when (ago at)]])])
 
-(defn- diagram-panel []
-  (let [{:keys [nodes edges width height]} (diagram/layout state/schema)]
-    [:div.diagram
-     [:p.hint "Generated from the schema at render time: model paths, events
-               and effects, laid out by dependency depth."]
-     [:div.diagram-scroll
+(defn- diagram-panel
+  "The event graph, sized to the panel and movable.
+
+  `data-ignore-morph` on the block is what makes zoom and pan stick: the schema
+  never changes at runtime, so the stream has nothing to say here, and leaving
+  it alone keeps a viewer's position from snapping back on the next patch. Zoom
+  and offset live in datastar signals that the transform reads, so none of it
+  needs javascript of our own. The same flag lets a live re-render skip the
+  drawing, keeping a few kilobytes of static SVG out of every patch."
+  [live?]
+  (if live?
+    [:div.diagram {:data-ignore-morph true}]
+    (let [{:keys [nodes edges width height]} (diagram/layout state/schema)]
+      [:div.diagram {:data-ignore-morph true}
+       [:div.diagram-bar
+      [:p.hint "Drawn from the schema: model paths, events and effects, laid
+                out by dependency depth. It starts at a readable size with the
+                chain running off to the right, so drag to follow it and scroll
+                to zoom out."]
+      [:div.diagram-buttons
+       [:button {:title "zoom out"
+                 "data-on:click" "$dzoom = Math.max(0.25, $dzoom / 1.25)"} "−"]
+       [:button {:title "zoom in"
+                 "data-on:click" "$dzoom = Math.min(4, $dzoom * 1.25)"} "+"]
+       [:button {:title "back to the start"
+                 "data-on:click" "$dzoom = 1; $dx = 0; $dy = 0"} "reset"]]]
+     [:div.diagram-viewport
+      {"data-on:pointerdown" "$ddrag = true; $dpx = evt.clientX; $dpy = evt.clientY; evt.currentTarget.setPointerCapture(evt.pointerId)"
+       "data-on:pointermove" "$ddrag && ($dx += evt.clientX - $dpx, $dy += evt.clientY - $dpy, $dpx = evt.clientX, $dpy = evt.clientY)"
+       "data-on:pointerup"   "$ddrag = false; evt.currentTarget.releasePointerCapture(evt.pointerId)"
+       "data-on:pointercancel" "$ddrag = false"
+       "data-on:wheel__prevent" "$dzoom = Math.min(4, Math.max(0.25, $dzoom * (evt.deltaY < 0 ? 1.1 : 0.9)))"
+       "data-class" "{grabbing: $ddrag}"}
+      ;; slice rather than meet: the graph is a long ribbon, so fitting its
+      ;; width would shrink the labels past reading. This fills the panel's
+      ;; height at a readable scale and lets the viewer drag along it.
       [:svg {:viewBox (str "0 0 " width " " height)
-             :width width :height height}
-       (for [{:keys [x1 y1 x2 y2]} edges]
-         [:path {:d (str "M" x1 "," y1 " C" (+ x1 30) "," y1 " " (- x2 30) "," y2 " " x2 "," y2)
-                 :class "edge"}])
-       (for [{:keys [x y w h kind label]} nodes]
-         (list
-          [:rect {:x x :y y :width w :height h :rx 6 :class (str "node " (name kind))}]
-          [:text {:x (+ x (/ w 2)) :y (+ y 18) :class "node-label"} label]))]]]))
+             :preserveAspectRatio "xMinYMid slice"
+             :role "img"}
+       [:g {"data-attr-transform" "`translate(${$dx},${$dy}) scale(${$dzoom})`"}
+        (for [{:keys [x1 y1 x2 y2]} edges]
+          [:path {:d (str "M" x1 "," y1 " C" (+ x1 30) "," y1 " " (- x2 30) "," y2 " " x2 "," y2)
+                  :class "edge"}])
+        (for [{:keys [x y w h kind label]} nodes]
+          (list
+           [:rect {:x x :y y :width w :height h :rx 6 :class (str "node " (name kind))}]
+           [:text {:x (+ x (/ w 2)) :y (+ y 18) :class "node-label"} label]))]]]])))
 
 ;; ---------------------------------------------------------------- controls
 
-(defn- slider [{:keys [label signal route min max step suffix value]}]
-  [:label.control
+(defn- slider
+  "A slider row owned by the client.
+
+  `data-ignore-morph` keeps the stream out of it: the value lives in a datastar
+  signal, so a re-render arriving mid-drag would morph the server's idea of the
+  number over the one under the thumb. The readout renders empty for the same
+  reason, since `data-text` fills it. Debouncing the action means one request
+  when the thumb settles rather than one per pixel of travel."
+  [{:keys [label signal route min max step suffix]}]
+  [:label.control {:data-ignore-morph true}
    [:span.control-label label]
    [:input {:type "range" :min min :max max :step step
             :data-bind signal
-            "data-on:change" (str "@get('" route "')")}]
-   [:output {:data-text (str "$" signal)} value]
+            "data-on:input__debounce.200ms" (str "@get('" route "')")}]
+   [:output {:data-text (str "$" signal)}]
    (when suffix [:span.suffix suffix])])
 
 (defn- controls-panel
@@ -180,23 +220,23 @@
                    :class (if (get-in db [:lanes k :running?]) "on" "off")}
           (if (get-in db [:lanes k :running?]) (str "pause " lane-label) (str "start " lane-label))])]
       (slider {:label "sample interval" :signal "interval" :route "/controls/interval"
-               :min 100 :max 2000 :step 100 :suffix "ms" :value (:interval-ms controls)})
+               :min 100 :max 2000 :step 100 :suffix "ms"})
       (slider {:label "consumer delay" :signal "delay" :route "/controls/delay"
-               :min 0 :max 400 :step 10 :suffix "ms" :value (:consumer-delay controls)})]
+               :min 0 :max 400 :step 10 :suffix "ms"})]
 
      [:div.control-group
       [:h3 "Derivation"]
       (slider {:label "window" :signal "window" :route "/controls/window"
-               :min 5 :max 200 :step 5 :suffix "samples" :value (:window controls)})
+               :min 5 :max 200 :step 5 :suffix "samples"})
       (slider {:label "warn at" :signal "warn" :route "/controls/warn"
-               :min 0.05 :max 1 :step 0.05 :value (:warn controls)})
+               :min 0.05 :max 1 :step 0.05})
       (slider {:label "critical at" :signal "crit" :route "/controls/crit"
-               :min 0.05 :max 1 :step 0.05 :value (:crit controls)})]
+               :min 0.05 :max 1 :step 0.05})]
 
      [:div.control-group
       [:h3 "Effects"]
       (slider {:label "sink failure rate" :signal "sink" :route "/controls/sink"
-               :min 0 :max 1 :step 0.1 :value (:sink-failure controls)})
+               :min 0 :max 1 :step 0.1})
       [:div.buttons
        [:button {"data-on:click" "@get('/controls/mute')"
                  :class (if (:muted? controls) "on" "off")}
@@ -205,7 +245,7 @@
                  :class (if (:slow-probe? controls) "on" "off")}
         (if (:slow-probe? controls) "probe: slow" "probe: fast")]]
       (slider {:label "burst (spinners)" :signal "burst" :route "/burst"
-               :min 0 :max 8 :step 1 :value (:count burst 0)})
+               :min 0 :max 8 :step 1})
       [:div.buttons
        (if (= :running (:state export))
          [:button.danger {"data-on:click" "@get('/export/cancel')"}
@@ -225,41 +265,43 @@
   "The live region, rendered from one published snapshot.
 
   Reading a single ratom is also what keeps each SSE connection to a single
-  watcher registration per render -- see the note in `app.state`."
-  []
-  (let [{:keys [db cascade log]} @state/view
-        {:keys [sample history stats alert pressure controls probe lanes]} db
-        cpu     (map :cpu history)
-        mem     (map :mem history)
-        net     (map :net history)]
-    [:div#app-body
-     (alert-banner alert)
-     (gauge pressure (:warn controls) (:crit controls))
-     [:div.grid
-      [:div.metrics
-       (metric {:label "CPU" :value (pct (:cpu sample))
-                :sub (str "avg " (pct (get-in stats [:cpu :avg])) " over " (:window controls))
-                :series cpu :scale-max 1.0
-                :extra (core-bars (:cores sample))})
-       (metric {:label "Memory" :value (pct (:mem sample))
-                :sub (str (long (/ (:mem-used-kb sample 0) 1024)) " MB of "
-                          (long (/ (:mem-total-kb sample 0) 1024)) " MB")
-                :series mem :scale-max 1.0})
-       (metric {:label "Network" :value (bytes-per-s (+ (:net-rx sample 0.0) (:net-tx sample 0.0)))
-                :sub (str "rx " (bytes-per-s (:net-rx sample)) " · tx " (bytes-per-s (:net-tx sample)))
-                :series net})]
-      [:div.side
-       [:nav.tabs
-        (for [[k label] [["lanes" "Lanes"] ["cascade" "Cascade"] ["model" "Model"] ["log" "Log"]]]
-          [:button {"data-on:click" (str "$tab = '" k "'")
-                    "data-class" (str "{active: $tab == '" k "'}")}
-           label])]
-       [:div.panel {"data-show" "$tab == 'lanes'"}
-        (lanes-panel lanes probe (count history) (:interval-ms controls))]
-       [:div.panel {"data-show" "$tab == 'cascade'"} (cascade-panel cascade)]
-       [:div.panel {"data-show" "$tab == 'model'"} (diagram-panel)]
-       [:div.panel {"data-show" "$tab == 'log'"} (log-panel log)]]]
-     (controls-panel db)]))
+  watcher registration per render -- see the note in `app.state`. `live?` marks
+  a re-render going out over the stream, which leaves the static parts out."
+  ([] (fragment false))
+  ([live?]
+   (let [{:keys [db cascade log]} @state/view
+         {:keys [sample history stats alert pressure controls probe lanes]} db
+         cpu     (map :cpu history)
+         mem     (map :mem history)
+         net     (map :net history)]
+     [:div#app-body
+      (alert-banner alert)
+      (gauge pressure (:warn controls) (:crit controls))
+      [:div.grid
+       [:div.metrics
+        (metric {:label "CPU" :value (pct (:cpu sample))
+                 :sub (str "avg " (pct (get-in stats [:cpu :avg])) " over " (:window controls))
+                 :series cpu :scale-max 1.0
+                 :extra (core-bars (:cores sample))})
+        (metric {:label "Memory" :value (pct (:mem sample))
+                 :sub (str (long (/ (:mem-used-kb sample 0) 1024)) " MB of "
+                           (long (/ (:mem-total-kb sample 0) 1024)) " MB")
+                 :series mem :scale-max 1.0})
+        (metric {:label "Network" :value (bytes-per-s (+ (:net-rx sample 0.0) (:net-tx sample 0.0)))
+                 :sub (str "rx " (bytes-per-s (:net-rx sample)) " · tx " (bytes-per-s (:net-tx sample)))
+                 :series net})]
+       [:div.side
+        [:nav.tabs
+         (for [[k label] [["lanes" "Lanes"] ["cascade" "Cascade"] ["model" "Model"] ["log" "Log"]]]
+           [:button {"data-on:click" (str "$tab = '" k "'")
+                     "data-class" (str "{active: $tab == '" k "'}")}
+            label])]
+        [:div.panel {"data-show" "$tab == 'lanes'"}
+         (lanes-panel lanes probe (count history) (:interval-ms controls))]
+        [:div.panel {"data-show" "$tab == 'cascade'"} (cascade-panel cascade)]
+        [:div.panel {"data-show" "$tab == 'model'"} (diagram-panel live?)]
+        [:div.panel {"data-show" "$tab == 'log'"} (log-panel log)]]]
+      (controls-panel db)])))
 
 ;; -------------------------------------------------------------------- page
 
@@ -331,7 +373,15 @@ main{padding:16px 20px 40px;max-width:1500px;margin:0 auto}
 .log .line.error .tag{color:var(--crit)}
 .log .txt{flex:1}
 .log .when{color:var(--dim)}
-.diagram-scroll{overflow:auto}
+.diagram{display:flex;flex-direction:column;gap:8px}
+.diagram-bar{display:flex;align-items:flex-start;gap:12px}
+.diagram-bar .hint{margin:0;flex:1}
+.diagram-buttons{display:flex;gap:4px}
+.diagram-buttons button{padding:2px 8px;line-height:1.2}
+.diagram-viewport{border:1px solid var(--line);border-radius:6px;background:#0b0e13;
+                  height:420px;overflow:hidden;cursor:grab;touch-action:none}
+.diagram-viewport.grabbing{cursor:grabbing}
+.diagram-viewport svg{width:100%;height:100%;display:block}
 .node{fill:#0b0e13;stroke:var(--line)}
 .node.event{fill:#132133;stroke:var(--accent)}
 .node.effect{fill:#2a1c10;stroke:var(--warn)}
@@ -363,6 +413,12 @@ button.danger{border-color:var(--crit);color:var(--crit)}
         opts (ds/init-opts
               {:selector "#app"
                :signals {:tab      "lanes"
+                         :dzoom    1
+                         :dx       0
+                         :dy       0
+                         :ddrag    false
+                         :dpx      0
+                         :dpy      0
                          :window   (:window controls)
                          :interval (:interval-ms controls)
                          :warn     (:warn controls)
