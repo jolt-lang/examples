@@ -1,0 +1,28 @@
+;; Live pipeline dashboard. Read at runtime, so it stays next to the binary.
+{:port 3000
+
+ ;; Lane C (polled): how often the /proc sampler ticks. procfs has no push, so
+ ;; this lane polls and the UI says so.
+ :sample-interval-ms 500
+
+ ;; how many samples the derived-stat window keeps
+ :window 60
+
+ ;; Lane B (pull): milliseconds of simulated render work per line. Raising it
+ ;; throttles the producer through the pipe -- that is the backpressure demo.
+ :consumer-delay-ms 0
+
+ ;; pressure index thresholds (0..1)
+ :warn-threshold 0.55
+ :crit-threshold 0.85
+
+ ;; the notification sink fails this often, so retries are demonstrable
+ :alert-sink-failure-rate 0.4
+ :alert-max-attempts 5
+
+ ;; how often the model is mirrored into the render cell (the model itself is
+ ;; written whenever a sample lands, which is faster than any browser needs)
+ :publish-hz 10
+
+ ;; where cancellable exports are written
+ :export-dir "target/exports"}
