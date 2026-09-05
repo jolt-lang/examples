@@ -80,7 +80,7 @@
                   ;; the test drives the running server with jolt.http-client
                   :extra-deps {jolt-lang/http-client
                                {:git/url "https://github.com/jolt-lang/http-client"
-                                :git/sha "f0c675da0a6c8230952f72d834847ccdb5a3a59e"}}
+                                :git/sha "a9c5d89054c9cdb84b7905e0dfd7cf9ca82793c6"}}
                   :main-opts ["-m" "app.core-test"]}}
 
   :tasks {serve {:doc "run the server" :main-opts ["-m" "app.core"]}
