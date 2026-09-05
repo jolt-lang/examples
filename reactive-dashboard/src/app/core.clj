@@ -102,7 +102,7 @@
   middleware flags the request as the SSE stream."
   [{:keys [uri jolt.datastar/sse-request] :as req}]
   (cond
-    (and sse-request (= uri "/")) {:status 200 :body (h/html (ui/fragment))}
+    (and sse-request (= uri "/")) {:status 200 :body (h/html (ui/fragment true))}
     (= uri "/")                   {:status 200 :body (ui/page)}
     :else                         (routes req)))
 
@@ -127,7 +127,10 @@
   (let [cfg     (or (try (edn/read-string (slurp "config.edn")) (catch Exception _ nil)) {})
         port    (:port cfg 3000)
         _       (start! cfg)
-        handler (ds/wrap-datastar app {:rate-limit-ms 100})
+        ;; the stream re-renders one fragment, so this rate limit is the
+        ;; page's frame rate. 250ms is smooth without asking a browser to
+        ;; morph the whole thing ten times a second.
+        handler (ds/wrap-datastar app {:rate-limit-ms 250})
          ;; :fibers rather than the default thread-per-connection: each open
          ;; tab holds an SSE stream until it closes, and a worker pool would
          ;; be fully subscribed by a handful of viewers.
