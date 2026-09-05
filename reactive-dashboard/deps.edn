@@ -1,0 +1,39 @@
+{:paths ["src" "resources"]
+
+ ;; The demo stack, all on jolt (no JVM):
+ ;;   ring-chez-adapter  -- HTTP/1.1 over BSD sockets through jolt.ffi
+ ;;   glimmer-datastar   -- datastar v1.0 wire protocol; SSE re-render on ratom change
+ ;;   ebb                -- missionary for jolt: the streaming/concurrency layer
+ ;;   domino             -- data flow engine: the pure state layer (no runtime deps)
+ ;;   process            -- babashka.process for jolt: spawns the streaming sources
+ :deps {jolt-lang/ring-chez-adapter
+        {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
+         :git/tag "v0.7.3"
+         :git/sha "a1a37df1d8c549605b4b301a64417ff62d2cc97e"}
+        jolt-lang/glimmer-datastar
+        {:git/url "https://github.com/jolt-lang/glimmer-datastar"
+         :git/sha "a499b1b1b2fdb6f25ebd7a34d87aa8b7783f9e0c"}
+        jlt-commons/ebb
+        {:git/url "https://github.com/jlt-commons/ebb"
+         :git/sha "08568483e851b916c8a491be33dc84509a9b7e28"}
+        domino/core
+        {:git/url "https://github.com/domino-clj/domino.git"
+         :git/tag "v0.5.0"
+         :git/sha "c9c2c3a5a1046295a156f61fb26b65cbae555232"}
+        babashka/process
+        {:git/url "https://github.com/jolt-lang/process"
+         :git/sha "43bdd65e189f2ccacc56662c53a21f5470ff1500"}
+        ;; hiccup 2.0.0 (verified jolt-compatible; see examples/hiccup-app)
+        weavejester/hiccup
+        {:git/url "https://github.com/weavejester/hiccup"
+         :git/sha "b6b12097ba973141fe87c1b4d6a27ddcce5d5929"}}
+
+ ;; `jolt build -m app.core` bakes resources/ (the vendored datastar.js) into
+ ;; the binary.
+ :jolt/build {:embed ["resources"]}
+
+ :aliases {:test {:extra-paths ["test"]
+                  :main-opts   ["-m" "app.test-runner"]}}
+
+ :tasks {serve {:doc "run the dashboard" :main-opts ["-m" "app.core"]}
+         test  "jolt -M:test"}}
