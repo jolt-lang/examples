@@ -15,7 +15,8 @@
          :git/sha "a499b1b1b2fdb6f25ebd7a34d87aa8b7783f9e0c"}
         jlt-commons/ebb
         {:git/url "https://github.com/jlt-commons/ebb"
-         :git/sha "08568483e851b916c8a491be33dc84509a9b7e28"}
+         :git/tag "v0.1.1"
+         :git/sha "abf942748ad8d169ff59fe53985f6e59f546aa2c"}
         domino/core
         {:git/url "https://github.com/domino-clj/domino.git"
          :git/tag "v0.5.0"
