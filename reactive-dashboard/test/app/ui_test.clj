@@ -61,12 +61,26 @@
       (is (not (str/includes? html "data-on:change"))))))
 
 (deftest the-diagram-can-be-moved
-  (let [html (render)]
+  (let [html (render)
+        panel (h/html (#'ui/diagram-panel false))]
     (is (str/includes? html "$dzoom"))
-    (is (str/includes? html "data-attr-transform"))
+    (testing "the transform is bound with datastar's key syntax -- the hyphen
+              form parses as an unknown plugin and is silently dropped, which
+              left the buttons and the drag doing nothing"
+      (is (str/includes? html "data-attr:transform=\"`translate(${$dx},${$dy}) scale(${$dzoom})`\""))
+      (is (not (str/includes? html "data-attr-transform"))))
+    (testing "user units are pixels, so a dragged pixel moves the graph a pixel"
+      (is (not (str/includes? panel "viewBox")))
+      (is (not (str/includes? panel "preserveAspectRatio"))))
     (testing "zoom stays within bounds a viewer can recover from"
       (is (str/includes? html "Math.max(0.25"))
       (is (str/includes? html "Math.min(4")))
+    (testing "zoom keeps the point under the cursor, or the panel's centre,
+              where it is rather than scaling about the origin"
+      (is (str/includes? panel "evt.clientX - r.left"))
+      (is (str/includes? panel "clientWidth / 2"))
+      (is (= 3 (count (re-seq #"\$dx = px - \(px - \$dx\) \* z / \$dzoom" panel)))
+          "wheel, + and - all zoom the same way"))
     (testing "and the page seeds the signals the transform reads"
       (let [page (ui/page)]
         (is (str/includes? page "dzoom"))

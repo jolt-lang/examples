@@ -139,6 +139,26 @@
       [:span.txt text]
       [:span.when (ago at)]])])
 
+(defn- zoom-js
+  "A datastar handler that scales the diagram by `factor` about a point,
+  keeping whatever is under that point where it is; scaling about the origin
+  instead would fling the far end of the chain out of view on every step.
+  `anchor` is JS yielding the point as [x y] in viewport pixels."
+  [factor anchor]
+  (str "const [px, py] = " anchor ","
+       " z = Math.min(4, Math.max(0.25, $dzoom * (" factor ")));"
+       " $dx = px - (px - $dx) * z / $dzoom;"
+       " $dy = py - (py - $dy) * z / $dzoom;"
+       " $dzoom = z"))
+
+(def ^:private viewport-centre
+  "Anchor for the bar's buttons: the middle of the viewport they sit above."
+  "(v => [v.clientWidth / 2, v.clientHeight / 2])(el.closest('.diagram').querySelector('.diagram-viewport'))")
+
+(def ^:private cursor
+  "Anchor for the wheel: the pointer, relative to the viewport it is over."
+  "(r => [evt.clientX - r.left, evt.clientY - r.top])(el.getBoundingClientRect())")
+
 (defn- diagram-panel
   "The event graph, sized to the panel and movable.
 
@@ -147,45 +167,43 @@
   it alone keeps a viewer's position from snapping back on the next patch. Zoom
   and offset live in datastar signals that the transform reads, so none of it
   needs javascript of our own. The same flag lets a live re-render skip the
-  drawing, keeping a few kilobytes of static SVG out of every patch."
+  drawing, keeping a few kilobytes of static SVG out of every patch.
+
+  The SVG has no viewBox: user units are CSS pixels, so the translate is in
+  the same units the pointer moves in and the graph starts at its natural,
+  readable size with the chain running off to the right. Fitting the width
+  instead would shrink the labels past reading."
   [live?]
   (if live?
     [:div.diagram {:data-ignore-morph true}]
-    (let [{:keys [nodes edges width height]} (diagram/layout state/schema)]
+    (let [{:keys [nodes edges]} (diagram/layout state/schema)]
       [:div.diagram {:data-ignore-morph true}
        [:div.diagram-bar
-      [:p.hint "Drawn from the schema: model paths, events and effects, laid
-                out by dependency depth. It starts at a readable size with the
-                chain running off to the right, so drag to follow it and scroll
-                to zoom out."]
-      [:div.diagram-buttons
-       [:button {:title "zoom out"
-                 "data-on:click" "$dzoom = Math.max(0.25, $dzoom / 1.25)"} "−"]
-       [:button {:title "zoom in"
-                 "data-on:click" "$dzoom = Math.min(4, $dzoom * 1.25)"} "+"]
-       [:button {:title "back to the start"
-                 "data-on:click" "$dzoom = 1; $dx = 0; $dy = 0"} "reset"]]]
-     [:div.diagram-viewport
-      {"data-on:pointerdown" "$ddrag = true; $dpx = evt.clientX; $dpy = evt.clientY; evt.currentTarget.setPointerCapture(evt.pointerId)"
-       "data-on:pointermove" "$ddrag && ($dx += evt.clientX - $dpx, $dy += evt.clientY - $dpy, $dpx = evt.clientX, $dpy = evt.clientY)"
-       "data-on:pointerup"   "$ddrag = false; evt.currentTarget.releasePointerCapture(evt.pointerId)"
-       "data-on:pointercancel" "$ddrag = false"
-       "data-on:wheel__prevent" "$dzoom = Math.min(4, Math.max(0.25, $dzoom * (evt.deltaY < 0 ? 1.1 : 0.9)))"
-       "data-class" "{grabbing: $ddrag}"}
-      ;; slice rather than meet: the graph is a long ribbon, so fitting its
-      ;; width would shrink the labels past reading. This fills the panel's
-      ;; height at a readable scale and lets the viewer drag along it.
-      [:svg {:viewBox (str "0 0 " width " " height)
-             :preserveAspectRatio "xMinYMid slice"
-             :role "img"}
-       [:g {"data-attr-transform" "`translate(${$dx},${$dy}) scale(${$dzoom})`"}
-        (for [{:keys [x1 y1 x2 y2]} edges]
-          [:path {:d (str "M" x1 "," y1 " C" (+ x1 30) "," y1 " " (- x2 30) "," y2 " " x2 "," y2)
-                  :class "edge"}])
-        (for [{:keys [x y w h kind label]} nodes]
-          (list
-           [:rect {:x x :y y :width w :height h :rx 6 :class (str "node " (name kind))}]
-           [:text {:x (+ x (/ w 2)) :y (+ y 18) :class "node-label"} label]))]]]])))
+        [:p.hint "Drawn from the schema: model paths, events and effects, laid
+                  out by dependency depth. It starts at a readable size with the
+                  chain running off to the right, so drag to follow it and scroll
+                  to zoom out."]
+        [:div.diagram-buttons
+         [:button {:title "zoom out" "data-on:click" (zoom-js "1 / 1.25" viewport-centre)} "−"]
+         [:button {:title "zoom in" "data-on:click" (zoom-js "1.25" viewport-centre)} "+"]
+         [:button {:title "back to the start"
+                   "data-on:click" "$dzoom = 1; $dx = 0; $dy = 0"} "reset"]]]
+       [:div.diagram-viewport
+        {"data-on:pointerdown" "$ddrag = true; $dpx = evt.clientX; $dpy = evt.clientY; evt.currentTarget.setPointerCapture(evt.pointerId)"
+         "data-on:pointermove" "$ddrag && ($dx += evt.clientX - $dpx, $dy += evt.clientY - $dpy, $dpx = evt.clientX, $dpy = evt.clientY)"
+         "data-on:pointerup"   "$ddrag = false; evt.currentTarget.releasePointerCapture(evt.pointerId)"
+         "data-on:pointercancel" "$ddrag = false"
+         "data-on:wheel__prevent" (zoom-js "evt.deltaY < 0 ? 1.1 : 0.9" cursor)
+         "data-class" "{grabbing: $ddrag}"}
+        [:svg {:role "img"}
+         [:g {"data-attr:transform" "`translate(${$dx},${$dy}) scale(${$dzoom})`"}
+          (for [{:keys [x1 y1 x2 y2]} edges]
+            [:path {:d (str "M" x1 "," y1 " C" (+ x1 30) "," y1 " " (- x2 30) "," y2 " " x2 "," y2)
+                    :class "edge"}])
+          (for [{:keys [x y w h kind label]} nodes]
+            (list
+             [:rect {:x x :y y :width w :height h :rx 6 :class (str "node " (name kind))}]
+             [:text {:x (+ x (/ w 2)) :y (+ y 18) :class "node-label"} label]))]]]])))
 
 ;; ---------------------------------------------------------------- controls
 
@@ -379,7 +397,7 @@ main{padding:16px 20px 40px;max-width:1500px;margin:0 auto}
 .diagram-buttons{display:flex;gap:4px}
 .diagram-buttons button{padding:2px 8px;line-height:1.2}
 .diagram-viewport{border:1px solid var(--line);border-radius:6px;background:#0b0e13;
-                  height:420px;overflow:hidden;cursor:grab;touch-action:none}
+                  height:420px;overflow:hidden;cursor:grab;touch-action:none;user-select:none}
 .diagram-viewport.grabbing{cursor:grabbing}
 .diagram-viewport svg{width:100%;height:100%;display:block}
 .node{fill:#0b0e13;stroke:var(--line)}
