@@ -12,7 +12,7 @@
          :git/sha "a1a37df1d8c549605b4b301a64417ff62d2cc97e"}
         jolt-lang/glimmer-datastar
         {:git/url "https://github.com/jolt-lang/glimmer-datastar"
-         :git/sha "a499b1b1b2fdb6f25ebd7a34d87aa8b7783f9e0c"}
+         :git/sha "2f4339de998de5eba6f9fc1bb08c6bba3158b787"}
         jlt-commons/ebb
         {:git/url "https://github.com/jlt-commons/ebb"
          :git/tag "v0.1.1"
