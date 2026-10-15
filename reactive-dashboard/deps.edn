@@ -5,7 +5,7 @@
  ;;   glimmer-datastar   -- datastar v1.0 wire protocol; SSE re-render on ratom change
  ;;   ebb                -- missionary for jolt: the streaming/concurrency layer
  ;;   domino             -- data flow engine: the pure state layer (no runtime deps)
- ;;   process            -- babashka.process for jolt: spawns the streaming sources
+ ;;   babashka.process   -- spawns the streaming sources; ships with jolt
  :deps {jolt-lang/ring-chez-adapter
         {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
          :git/tag "v0.7.3"
@@ -21,9 +21,6 @@
         {:git/url "https://github.com/domino-clj/domino.git"
          :git/tag "v0.5.0"
          :git/sha "c9c2c3a5a1046295a156f61fb26b65cbae555232"}
-        babashka/process
-        {:git/url "https://github.com/jolt-lang/process"
-         :git/sha "43bdd65e189f2ccacc56662c53a21f5470ff1500"}
         ;; hiccup 2.0.0 (verified jolt-compatible; see examples/hiccup-app)
         weavejester/hiccup
         {:git/url "https://github.com/weavejester/hiccup"
