@@ -8,15 +8,15 @@
  ;;   babashka.process   -- spawns the streaming sources; ships with jolt
  :deps {jolt-lang/ring-chez-adapter
         {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-         :git/tag "v0.7.3"
-         :git/sha "a1a37df1d8c549605b4b301a64417ff62d2cc97e"}
+         :git/tag "v0.8.0"
+         :git/sha "87e637e2ce3b6d25fee67b8bf86cd7595eea30a4"}
         jolt-lang/glimmer-datastar
         {:git/url "https://github.com/jolt-lang/glimmer-datastar"
-         :git/sha "2f4339de998de5eba6f9fc1bb08c6bba3158b787"}
+         :git/sha "2c8024eb6c05282ea9a062942b28af1cd3c9bd09"}
         jlt-commons/ebb
         {:git/url "https://github.com/jlt-commons/ebb"
-         :git/tag "v0.1.1"
-         :git/sha "abf942748ad8d169ff59fe53985f6e59f546aa2c"}
+         :git/tag "v0.1.4"
+         :git/sha "15f6f7c0ee8b54a862e9f981b5867fab23459498"}
         domino/core
         {:git/url "https://github.com/domino-clj/domino.git"
          :git/tag "v0.5.0"

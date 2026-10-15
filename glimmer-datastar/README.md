@@ -32,8 +32,9 @@ re-rendered fragment. The vendored client is the official datastar
 - `ds/init-opts` — emits the page's `data-signals` (seeded state + per-tab id)
   and `data-init` (opens the SSE stream on `#app`).
 
-The datastar library lives at `../../datastar` and is pulled in with
-`:local/root` (it has no git remote yet); jolt expands its deps — glimmer,
+The datastar library is
+[jolt-lang/glimmer-datastar](https://github.com/jolt-lang/glimmer-datastar),
+pulled in as a git dep; jolt expands its deps — glimmer,
 `clojure.data.json`, jolt-lang/time — transitively.
 
 ## Standalone binary
