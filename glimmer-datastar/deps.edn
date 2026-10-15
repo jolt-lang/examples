@@ -1,15 +1,17 @@
 {:paths ["src" "resources"]
 
  ;; A minimal datastar demo: the HTTP server is ring-chez-adapter (BSD sockets
- ;; over jolt.ffi); the datastar middleware is this workspace's own library,
- ;; referenced by :local/root (it has no git remote yet). jolt expands the
- ;; local root's deps (glimmer, clojure.data.json, jolt-lang/time) transitively.
+ ;; over jolt.ffi); the datastar middleware is jolt-lang/glimmer-datastar, whose
+ ;; own deps (glimmer, clojure.data.json, jolt-lang/time) jolt expands
+ ;; transitively.
  :deps {jolt-lang/ring-chez-adapter
         {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-         :git/tag "v0.7.3"
-         :git/sha "a1a37df1d8c549605b4b301a64417ff62d2cc97e"}
-        jolt-lang/datastar
-        {:local/root "../../datastar"}
+         :git/tag "v0.7.15"
+         :git/sha "f491a05452ef80ef4112cd21aa88145411577143"}
+        jolt-lang/glimmer-datastar
+        {:git/url "https://github.com/jolt-lang/glimmer-datastar"
+         :git/tag "v0.1.7"
+         :git/sha "2c8024eb6c05282ea9a062942b28af1cd3c9bd09"}
         ;; hiccup 2.0.0 (verified jolt-compatible; see examples/hiccup-app)
         weavejester/hiccup
         {:git/url "https://github.com/weavejester/hiccup"

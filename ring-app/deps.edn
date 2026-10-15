@@ -5,20 +5,20 @@
  ;; jolt-lang/ring-chez-adapter library (BSD sockets over jolt.ffi); the SQLite
  ;; binding is jolt-lang/db (jdbc.core over libsqlite3 via jolt.ffi); the rest are
  ;; pure-Clojure libraries pulled straight from their git repos and run unchanged.
- :deps {jolt-lang/time
+ :deps {io.github.jolt-lang/time
         {:git/url "https://github.com/jolt-lang/time.git"
-         :git/sha "33c5e9831c046cfcbe68bc0c9c33e92568eaebb1"}
+         :git/sha "2c58d9c709a25d80608757c3026f4c656a994ef1"}
           jolt-lang/ring-chez-adapter
             {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-             :git/tag "v0.7.2"
-             :git/sha "4d2548c035c0"}
+             :git/tag "v0.7.15"
+             :git/sha "f491a05452ef80ef4112cd21aa88145411577143"}
          jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
-                       :git/sha "a54cc49f9ee8b6f6b0a1dd4f695a5390fedb5bfc"}
+                       :git/sha "1a25bcbc1489a39223b98949b175dceab18b2638"}
          ;; crypto (AES/HMAC/SecureRandom over OpenSSL) so ring-defaults' session
          ;; + CSRF middleware loads. Shared with http-client; jolt.deps reconciles
          ;; the duplicate libssl/libcrypto natives to a single load.
          jolt-lang/jolt-crypto {:git/url "https://github.com/jolt-lang/jolt-crypto"
-                                :git/sha "44da69bad08a2fd7631bd4061e3fb53938dafff6"}
+                                :git/sha "e6981b853adc543120b785a0c29b6d7d6a10f0fe"}
          ring/ring-core {:mvn/version "1.15.4"}
          ring/ring-codec {:mvn/version "1.3.0"}
          ;; ring-defaults bundles a sensible middleware stack (params, static
@@ -48,7 +48,7 @@
          weavejester/dependency {:mvn/version "0.2.1"}
          meta-merge/meta-merge {:mvn/version "1.0.0"}
          jolt-lang/router {:git/url "https://github.com/jolt-lang/router"
-                           :git/sha "1056e782a80ee8cf54276f639f97811b619bbc47"
+                           :git/sha "bfc05a155f450aeb97e767ccac9423b01155e82e"
                            :exclusions [weavejester/meta-merge]}
          ;; tick date/time (over jolt's java.time) + its cljc.java-time / time-
          ;; literals deps; needs JOLT_FEATURES "clj" for the :clj reader branches.
@@ -66,7 +66,7 @@
          ;; nREPL middleware — sessions, interruptible-eval, completions, lookup,
          ;; and the cider-nrepl op set (info, complete, test, …) editors expect
          jolt-lang/nrepl {:git/url "https://github.com/jolt-lang/nrepl"
-                          :git/tag "v0.1.1" :git/sha "9cc45acc7a24"}}
+                          :git/tag "v0.3.0" :git/sha "d779043d18235a83025c2800b60c9080c1bc9adc"}}
 
  ;; `jolt build -m app.core` bakes these dirs' files into the binary, so the
  ;; Selmer template + CSS resolve via io/resource with no resources/ dir on disk.
@@ -80,7 +80,7 @@
                   ;; the test drives the running server with jolt.http-client
                   :extra-deps {jolt-lang/http-client
                                {:git/url "https://github.com/jolt-lang/http-client"
-                                :git/tag "v0.1.2" :git/sha "00455b813586"}}
+                                :git/tag "v0.1.4" :git/sha "e0c935e99b92db8e0934867f1cebcf11b3f837a5"}}
                   :main-opts ["-m" "app.core-test"]}}
 
   :tasks {serve {:doc "run the server" :main-opts ["-m" "app.core"]}

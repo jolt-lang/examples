@@ -6,8 +6,8 @@
  ;; project. So there is nothing to declare here and nothing to install: the
  ;; backend binds the ncurses that macOS and every Linux already ship.
  :deps {jolt-lang/glimmer-tui {:git/url "https://github.com/jolt-lang/glimmer-tui"
-                               :git/tag "v0.2.5"
-                               :git/sha "bf5707f1f7b2af1c808ad70cc232daeb930e140e"}}
+                               :git/tag "v0.2.12"
+                               :git/sha "ac8bd483d250a68cf49293596099144ed7d422bc"}}
 
  ;; `jolt -M:run` (or the `run` task) takes over the terminal and blocks until
  ;; you quit with ctrl-c or the Quit button.
