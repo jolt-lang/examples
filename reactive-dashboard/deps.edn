@@ -8,8 +8,8 @@
  ;;   babashka.process   -- spawns the streaming sources; ships with jolt
  :deps {jolt-lang/ring-chez-adapter
         {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-         :git/tag "v0.7.15"
-         :git/sha "f491a05452ef80ef4112cd21aa88145411577143"}
+         :git/tag "v0.8.0"
+         :git/sha "87e637e2ce3b6d25fee67b8bf86cd7595eea30a4"}
         jolt-lang/glimmer-datastar
         {:git/url "https://github.com/jolt-lang/glimmer-datastar"
          :git/sha "2c8024eb6c05282ea9a062942b28af1cd3c9bd09"}
