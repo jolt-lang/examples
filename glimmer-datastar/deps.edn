@@ -6,8 +6,8 @@
  ;; transitively.
  :deps {jolt-lang/ring-chez-adapter
         {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-         :git/tag "v0.8.0"
-         :git/sha "87e637e2ce3b6d25fee67b8bf86cd7595eea30a4"}
+         :git/tag "v0.9.0"
+         :git/sha "c2c2462ab10503c4927d4bbf03e72a29ea7aa531"}
         jolt-lang/glimmer-datastar
         {:git/url "https://github.com/jolt-lang/glimmer-datastar"
          :git/tag "v0.1.8"
