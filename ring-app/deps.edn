@@ -7,13 +7,13 @@
  ;; pure-Clojure libraries pulled straight from their git repos and run unchanged.
  :deps {io.github.jolt-lang/time
         {:git/url "https://github.com/jolt-lang/time.git"
-         :git/sha "2c58d9c709a25d80608757c3026f4c656a994ef1"}
+         :git/sha "753905d0e694600f593b9904e880a8a8379fb7b1"}
           jolt-lang/ring-chez-adapter
             {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
              :git/tag "v0.8.0"
              :git/sha "87e637e2ce3b6d25fee67b8bf86cd7595eea30a4"}
          jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
-                       :git/sha "1a25bcbc1489a39223b98949b175dceab18b2638"}
+                       :git/sha "de769b677eaec6be25dfb8c9a4f334e1bd57a574"}
          ;; crypto (AES/HMAC/SecureRandom over OpenSSL) so ring-defaults' session
          ;; + CSRF middleware loads. Shared with http-client; jolt.deps reconciles
          ;; the duplicate libssl/libcrypto natives to a single load.
