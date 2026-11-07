@@ -8,7 +8,8 @@
  ;; jolt.nrepl/start directly, so built binaries get it too.
  :deps {jolt-lang/nrepl
         {:git/url "https://github.com/jolt-lang/nrepl"
-         :git/tag "v0.3.0" :git/sha "d779043d18235a83025c2800b60c9080c1bc9adc"}}
+         :git/tag "v0.4.3"
+         :git/sha "8ada4beeb100a391045ec2d93eb566b476fb46f7"}}
 
  ;; for `jolt nrepl` in this project; app.core also references the same symbol.
  :nrepl/middleware [nrepl.middleware/default-middleware]

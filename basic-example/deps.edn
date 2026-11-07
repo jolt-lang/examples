@@ -4,8 +4,12 @@
  ;; the :nrepl/middleware entry and the nREPL-driven test that used to sit here
  ;; were copied from nrepl-example, which is where that app actually lives; see it
  ;; for the live-state-over-nREPL example.
- :deps {}
+ :deps {jolt/nrepl
+        {:git/url "https://github.com/jolt-lang/nrepl"
+         :git/sha "8ada4beeb100a391045ec2d93eb566b476fb46f7"}}
 
+  :nrepl/middleware [nrepl.middleware/default-middleware]
+ 
  :aliases {:test {:extra-paths ["test"]
                   :main-opts ["-m" "app.core-test"]}}
 
