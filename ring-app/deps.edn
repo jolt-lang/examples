@@ -10,8 +10,8 @@
          :git/sha "753905d0e694600f593b9904e880a8a8379fb7b1"}
           jolt-lang/ring-chez-adapter
             {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
-             :git/tag "v0.8.0"
-             :git/sha "87e637e2ce3b6d25fee67b8bf86cd7595eea30a4"}
+             :git/tag "v0.9.0"
+             :git/sha "c2c2462ab10503c4927d4bbf03e72a29ea7aa531"}
          jolt-lang/db {:git/url "https://github.com/jolt-lang/db"
                        :git/sha "de769b677eaec6be25dfb8c9a4f334e1bd57a574"}
          ;; crypto (AES/HMAC/SecureRandom over OpenSSL) so ring-defaults' session
