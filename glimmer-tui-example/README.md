@@ -31,7 +31,7 @@ data and comments.
 ## Running
 
 ```sh
-jolt run     # or jolt -M:run
+jolt start   # or jolt -M:run
 ```
 
 Nothing to install: the backend binds the ncurses that macOS and every Linux

@@ -12,8 +12,8 @@
                                  :git/tag "v0.3.1"
                                  :git/sha "6f8d8b35305c25c6464db01d0e026225c286e9b3"}}
 
- ;; `jolt -M:run` (or the `run` task) opens the window and blocks until it's
- ;; closed. `jolt build` compiles a standalone binary; AppKit ships with macOS,
+ ;; `jolt -M:run` (or `jolt start`) opens the window and blocks until it's
+ ;; closed. `jolt build -m app.core` compiles a standalone binary; AppKit ships with macOS,
  ;; so nothing extra needs installing.
  :aliases {:run {:main-opts ["-m" "app.core"]}}
 
@@ -21,5 +21,4 @@
               :direct-link true
               :tree-shake true}
 
- :tasks {run  "jolt -M:run"
-         build "jolt build -m app.core"}}
+ :tasks {start "jolt -M:run"}}

@@ -12,5 +12,5 @@
  :aliases {:run   {:main-opts ["-m" "gl-demo.core"]}
            :check {:main-opts ["-m" "gl-demo.check"]}}
 
- :tasks {run   "jolt -M:run"
+ :tasks {start "jolt -M:run"
          check "jolt -M:check"}}

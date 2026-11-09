@@ -3,7 +3,7 @@
  ;; jolt's nREPL *server* lives in jolt-core (jolt.nrepl: a bencode server over a
  ;; loopback socket). This library adds the server-side middleware (sessions,
  ;; interruptible-eval, completion, lookup) and an nREPL client. A consuming
- ;; project lists the middleware in :nrepl/middleware so `jolt nrepl` composes it
+ ;; project lists the middleware in :nrepl/middleware so `jolt nrepl-server` composes it
  ;; over the built-in handler. app.core passes the same middleware symbol to
  ;; jolt.nrepl/start directly, so built binaries get it too.
  :deps {jolt-lang/nrepl
@@ -11,12 +11,12 @@
          :git/tag "v0.4.3"
          :git/sha "8ada4beeb100a391045ec2d93eb566b476fb46f7"}}
 
- ;; for `jolt nrepl` in this project; app.core also references the same symbol.
+ ;; for `jolt nrepl-server` in this project; app.core also references the same symbol.
  :nrepl/middleware [nrepl.middleware/default-middleware]
 
  :aliases {:test {:extra-paths ["test"]
                   :main-opts ["-m" "app.core-test"]}}
 
- :tasks {run  {:doc "run the app: starts an nREPL server on 7888 and parks until ^C"
+ :tasks {start {:doc "run the app: starts an nREPL server on 7888 and parks until ^C"
                :main-opts ["-m" "app.core"]}
          test "jolt -M:test"}}

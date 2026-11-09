@@ -10,8 +10,8 @@
  :deps {jolt-lang/glimmer     {:local/root "../../glimmer"}
         jolt-lang/glimmer-gtk {:local/root "../../glimmer-gtk"}}
 
- ;; `jolt -M:run` (or the `run` task) opens the window and blocks until it's
- ;; closed. `jolt build` compiles a standalone binary that loads the GTK/glib
+ ;; `jolt -M:run` (or `jolt start`) opens the window and blocks until it's
+ ;; closed. `jolt build -m app.core` compiles a standalone binary that loads the GTK/glib
  ;; libs at startup.
  :aliases {:run {:main-opts ["-m" "app.core"]}}
 
@@ -19,5 +19,4 @@
               :direct-link true
               :tree-shake true}
 
- :tasks {run  "jolt -M:run"
-         build "jolt build -m app.core"}}
+ :tasks {start "jolt -M:run"}}

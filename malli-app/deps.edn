@@ -2,4 +2,4 @@
  :deps {metosin/malli
         {:git/url "https://github.com/metosin/malli"
          :git/sha "a74e3b45efa30b3bcdb2e997f337c71614eba3c5"}}
- :tasks {run {:doc "validate with malli" :main-opts ["-m" "app.core"]}}}
+ :tasks {start {:doc "validate with malli" :main-opts ["-m" "app.core"]}}}

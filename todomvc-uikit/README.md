@@ -41,7 +41,7 @@ glimmer-app/
 ## Run it
 
 ```sh
-jolt -M:run        # or: jolt run
+jolt -M:run        # or: jolt start
 ```
 
 This opens the window and blocks until you close it. AppKit ships with macOS,

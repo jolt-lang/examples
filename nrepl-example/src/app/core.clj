@@ -94,7 +94,7 @@
 
 (defn start-nrepl!
   "Start the nREPL server with the session/completion/lookup middleware, on a
-  background thread. Mirrors `jolt nrepl`: block SIGINT on this thread first so
+  background thread. Mirrors `jolt nrepl-server`: block SIGINT on this thread first so
   ^C lands here (not on the server's accept loop, which is parked in a foreign
   recv), bind the socket (a port-in-use error throws here), then register stop as
   a shutdown hook so ^C tears it down cleanly. Returns the stop fn."
