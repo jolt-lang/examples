@@ -6,6 +6,7 @@
             [glimmer.ratom :as ratom]
             [ring-chez.adapter :as adapter]
             [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [hiccup.core :as h]))
 
 (defonce state
@@ -67,13 +68,14 @@
     (= uri "/js/datastar.js")
     {:status 200
      :headers {"Content-Type" "application/javascript"}
-     :body    (slurp "resources/public/js/datastar.js")}
+     :body    (slurp (io/resource "public/js/datastar.js"))}
     :else {:status 404 :body "not found"}))
 
 (defn -main [& _]
   (jolt.host/block-sigint)
   (let [handler (ds/wrap-datastar app {:rate-limit-ms 15})
-        port    (or (some-> "config.edn" slurp edn/read-string :port) 3000)
+        cfg     (io/file "config.edn")
+        port    (or (when (.exists cfg) (:port (edn/read-string (slurp cfg)))) 3000)
         server  (adapter/run-server handler {:port port})]
     (println "datastar demo on http://localhost:" port)
     (jolt.host/add-shutdown-hook #(adapter/stop-server server))

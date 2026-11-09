@@ -6,6 +6,7 @@
   such as cancelling an in-flight export. The dashboard's own logic lives in
   `app.state`."
   (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [hiccup.core :as h]
             [jolt.datastar.core :as ds]
@@ -93,7 +94,7 @@
 
     "/js/datastar.js" {:status 200
                        :headers {"Content-Type" "application/javascript"}
-                       :body (slurp "resources/public/js/datastar.js")}
+                       :body (slurp (io/resource "public/js/datastar.js"))}
 
     {:status 404 :body "not found"}))
 

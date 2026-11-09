@@ -1,8 +1,8 @@
-# datastar-example
+# glimmer-datastar
 
 A datastar demo on jolt: a counter and a greeting list, live-updated over
 Server-Sent Events. The page state lives in a **glimmer** ratom (reagent-style
-reactive atom) server-side; the **jolt-lang/datastar** middleware opens an SSE
+reactive atom) server-side; the **jolt-lang/glimmer-datastar** middleware opens an SSE
 stream that re-renders the page fragment whenever the atom changes, and patches
 it in with `datastar-patch-elements` events — server-side reactivity in the
 reagent style, no page reloads.
@@ -40,8 +40,10 @@ pulled in as a git dep; jolt expands its deps — glimmer,
 ## Standalone binary
 
 ```
-jolt build -m app.core               # -> target/release/datastar-example
+jolt build -m app.core               # -> target/release/glimmer-datastar
 ```
 
 With `:jolt/build {:embed ["resources"]}` the vendored `datastar.js` is baked
-into the binary. `config.edn` is read at runtime, so keep it next to the binary.
+into the binary, and the handler reads it with `io/resource`, so the binary
+serves it from any directory. `config.edn` is read at runtime from the current
+directory (without one the server uses port 3000).

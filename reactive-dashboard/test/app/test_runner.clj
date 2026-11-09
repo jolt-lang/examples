@@ -5,14 +5,16 @@
             [app.state-test]
             [app.pipeline-test]
             [app.tasks-test]
-            [app.ui-test]))
+            [app.ui-test]
+            [app.core-test]))
 
 (def namespaces
   '[app.metrics-test
     app.state-test
     app.pipeline-test
     app.tasks-test
-    app.ui-test])
+    app.ui-test
+    app.core-test])
 
 (defn -main [& _]
   (let [{:keys [fail error] :as result} (apply t/run-tests namespaces)]
