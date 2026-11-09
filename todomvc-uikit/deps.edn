@@ -1,16 +1,16 @@
 {:paths ["src"]
 
- ;; glimmer (the toolkit-independent reactive core) and glimmer-uikit (its AppKit
- ;; backend for macOS) are consumed from GitHub at the v0.1.0 release. jolt's deps
+ ;; glimmer (the toolkit-independent reactive core) and glimmer-appkit (its
+ ;; AppKit backend for macOS) come from GitHub at their release tags. jolt's deps
  ;; resolver clones them by tag/sha and merges their :paths onto the classpath.
- ;; glimmer-uikit loads AppKit/CoreFoundation itself (guarded to macOS only), so
- ;; nothing has to be re-declared here.
- :deps {jolt-lang/glimmer       {:git/url "https://github.com/jolt-lang/glimmer"
-                                 :git/tag "v0.1.6"
-                                 :git/sha "d81af8fb2fa4164a2261db3c15fc7c93271dce60"}
-        jolt-lang/glimmer-uikit {:git/url "https://github.com/jolt-lang/glimmer-uikit"
-                                 :git/tag "v0.3.1"
-                                 :git/sha "6f8d8b35305c25c6464db01d0e026225c286e9b3"}}
+ ;; glimmer-appkit loads AppKit/CoreFoundation itself, so nothing has to be
+ ;; re-declared here.
+ :deps {jolt-lang/glimmer        {:git/url "https://github.com/jolt-lang/glimmer"
+                                  :git/tag "v0.1.7"
+                                  :git/sha "22350c4d047b05359a16b756b20f38ecb391a63b"}
+        jolt-lang/glimmer-appkit {:git/url "https://github.com/jolt-lang/glimmer-appkit"
+                                  :git/tag "v0.1.3"
+                                  :git/sha "532b45e582e40bd2df20c2df3c777a1978f09fd1"}}
 
  ;; `jolt -M:run` (or `jolt start`) opens the window and blocks until it's
  ;; closed. `jolt build -m app.core` compiles a standalone binary; AppKit ships with macOS,
