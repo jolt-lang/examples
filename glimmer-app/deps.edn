@@ -1,14 +1,18 @@
 {:paths ["src"]
 
  ;; glimmer (the toolkit-independent reactive core) and glimmer-gtk (its GTK4
- ;; backend) are consumed as local sibling deps. jolt's deps resolver reads each
- ;; project's deps.edn, merges its :paths onto the classpath, and — importantly —
- ;; merges glimmer-gtk's :jolt/native declarations (the GTK4/glib shared
- ;; libraries) into this project. So the native libs are loaded for the process
- ;; without re-declaring them here. Swap either to {:git/url ... :git/sha ...} to
- ;; make this app self-contained.
- :deps {jolt-lang/glimmer     {:local/root "../../glimmer"}
-        jolt-lang/glimmer-gtk {:local/root "../../glimmer-gtk"}}
+ ;; backend) come from git at their release tags. jolt's deps resolver clones
+ ;; each, merges its :paths onto the classpath, and — importantly — merges
+ ;; glimmer-gtk's :jolt/native declarations (the GTK4/glib shared libraries)
+ ;; into this project. So the native libs are loaded for the process without
+ ;; re-declaring them here. Point either at {:local/root "../../glimmer"} to
+ ;; work against a local checkout.
+ :deps {jolt-lang/glimmer     {:git/url "https://github.com/jolt-lang/glimmer"
+                               :git/tag "v0.1.7"
+                               :git/sha "22350c4d047b05359a16b756b20f38ecb391a63b"}
+        jolt-lang/glimmer-gtk {:git/url "https://github.com/jolt-lang/glimmer-gtk"
+                               :git/tag "v0.1.2"
+                               :git/sha "4887443b2c0d3f08a99ccb5084ad7d1de84b54e6"}}
 
  ;; `jolt -M:run` (or `jolt start`) opens the window and blocks until it's
  ;; closed. `jolt build -m app.core` compiles a standalone binary that loads the GTK/glib
