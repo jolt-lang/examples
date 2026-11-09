@@ -1,16 +1,16 @@
 # http-client-app
 
-Jolt's built-in HTTP client, `jolt.http-client`, against real HTTPS endpoints.
+[jolt-lang/http-client](https://github.com/jolt-lang/http-client),
+`jolt.http-client`, against real HTTPS endpoints.
 
 ```
-jolt run -m app.core
+jolt run -m app.core           # or: jolt start
 ```
 
-The client is part of jolt — no dependencies. It's backed by the system `curl`
-binary (libcurl's `curl_easy_setopt` is variadic, and Chez's fixed-signature FFI
-can't place a variadic arg where Apple Silicon expects it without a per-platform
-C shim; shelling to `curl` uses the same native library, with TLS, redirects and
-gzip, on every platform). The API mirrors the common Clojure HTTP shape:
+The client is a git dependency, not part of jolt. It is clj-http-lite running
+on JVM networking shims (`java.net.URL`, `HttpURLConnection`, `javax.net.ssl`)
+that the library implements over BSD sockets and the system OpenSSL through
+`jolt.ffi`; gzip uses jolt's own zlib. The API is the common Clojure HTTP shape:
 
 ```clojure
 (require '[jolt.http-client :as http])
@@ -21,12 +21,12 @@ gzip, on every platform). The API mirrors the common Clojure HTTP shape:
 ;; also head, put, delete, and the lower-level (http/request {:method :url …})
 ```
 
-A response is `{:status N :headers {…} :body "…"}`. Options: `:headers`,
-`:body`, `:query-params`, `:content-type` (`:json`/`:xml`/`:form` or a string),
-`:insecure?` (skip TLS verification), `:follow?`, `:timeout-ms`.
+A response is `{:status N :headers {…} :body "…"}`, and the request map is
+clj-http-lite's plus babashka.http-client's options (`:multipart`,
+`:form-params`, `:basic-auth`, `:async`, …); see the library's README.
 
 ## Requirements
 
-- `jolt` on PATH, and the system `curl` binary (preinstalled on macOS and most
-  Linux distros).
+- `jolt` on PATH. The library is fetched from git on first run.
+- OpenSSL 3 (`libssl`/`libcrypto`), for TLS.
 - A network connection for the real endpoints.

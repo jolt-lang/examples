@@ -14,7 +14,7 @@
       (println (format "  %-30s -> failed: %s" label (ex-message e))))))
 
 (defn -main [& _args]
-  (println "jolt.http-client (curl)\n=======================\n")
+  (println "jolt.http-client\n================\n")
   (println "Real HTTPS endpoints (needs network):")
   (try-req "GET https://example.com"  #(http/get "https://example.com"))
   (try-req "GET https://clojure.org"  #(http/get "https://clojure.org"))
