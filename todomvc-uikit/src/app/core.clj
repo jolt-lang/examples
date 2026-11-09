@@ -22,7 +22,7 @@
   (:require [clojure.string :as str]
             [glimmer.ratom :refer [atom cursor reaction]]
             [glimmer.core :as ui]
-            [glimmer-uikit.core]               ; installs the AppKit backend
+            [glimmer-appkit.core]              ; installs the AppKit backend
             [app.widgets :as w]))
 
 (defn- title []

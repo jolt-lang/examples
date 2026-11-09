@@ -4,16 +4,16 @@ A jolt app that starts a minimal app.
 
 ## Run in dev
 
-Interpreted, with the nREPL server on `127.0.0.1:7888`:
+Interpreted:
 
 ```
-jolt run -m app.core
+jolt run -m app.core           # or: jolt start
 ```
 
-Start nREPL with:
+Start an nREPL server for your editor (port 7888, writes `.nrepl-port`):
 
 ```
-jolt nrepl
+jolt nrepl-server
 ```
 
 ## Compile for release

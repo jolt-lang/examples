@@ -1,19 +1,19 @@
 {:paths ["src"]
 
- ;; No deps — app.core uses clojure.string and nothing else. The nREPL server dep,
- ;; the :nrepl/middleware entry and the nREPL-driven test that used to sit here
- ;; were copied from nrepl-example, which is where that app actually lives; see it
- ;; for the live-state-over-nREPL example.
- :deps {jolt/nrepl
+ ;; app.core uses clojure.string and nothing else. jolt-lang/nrepl is here only
+ ;; for `jolt nrepl-server`, which composes the :nrepl/middleware below over
+ ;; jolt's built-in server so an editor gets sessions, completion and lookup.
+ ;; nrepl-example shows an app that starts its own nREPL server.
+ :deps {jolt-lang/nrepl
         {:git/url "https://github.com/jolt-lang/nrepl"
-         :git/sha "8ada4beeb100a391045ec2d93eb566b476fb46f7"}}
+         :git/tag "v0.4.4" :git/sha "cc5a82c734fbaad9aacb951a2fca81597f2d1cdb"}}
 
-  :nrepl/middleware [nrepl.middleware/default-middleware]
- 
+ :nrepl/middleware [nrepl.middleware/default-middleware]
+
  :aliases {:test {:extra-paths ["test"]
                   :main-opts ["-m" "app.core-test"]}}
 
- :tasks {run  {:doc "run the app: prints a greeting and exits"
+ :tasks {start {:doc "run the app: prints a greeting and exits"
                :main-opts ["-m" "app.core"]}
          test "jolt -M:test"}
 

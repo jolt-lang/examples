@@ -1,8 +1,14 @@
 {:paths ["src"]
 
- :deps {jolt-lang/glimmer-gl  {:local/root "../../glimmer-gl"}
-        jolt-lang/glimmer-gtk {:local/root "../../glimmer-gtk"}
-        jolt-lang/glimmer     {:local/root "../../glimmer"}}
+ :deps {jolt-lang/glimmer-gl  {:git/url "https://github.com/jolt-lang/glimmer-gl"
+                               :git/tag "v0.1.2"
+                               :git/sha "1b206810daf437368ab0fc7483f9ef1ab83b4e44"}
+        jolt-lang/glimmer-gtk {:git/url "https://github.com/jolt-lang/glimmer-gtk"
+                               :git/tag "v0.1.2"
+                               :git/sha "4887443b2c0d3f08a99ccb5084ad7d1de84b54e6"}
+        jolt-lang/glimmer     {:git/url "https://github.com/jolt-lang/glimmer"
+                               :git/tag "v0.1.7"
+                               :git/sha "22350c4d047b05359a16b756b20f38ecb391a63b"}}
 
  ;; The native libraries — OpenGL (from glimmer-gl) and the GTK4/GLib stack
  ;; (from glimmer-gtk) — are declared in those deps' :jolt/native entries and
@@ -12,5 +18,5 @@
  :aliases {:run   {:main-opts ["-m" "gl-demo.core"]}
            :check {:main-opts ["-m" "gl-demo.check"]}}
 
- :tasks {run   "jolt -M:run"
+ :tasks {start "jolt -M:run"
          check "jolt -M:check"}}

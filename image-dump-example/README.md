@@ -81,7 +81,7 @@ unprintable, and shared objects become duplicates.
 
 ```
 image-dump-example/
-├── deps.edn             ; :local/root ../../glimmer + ../../glimmer-gtk (source + GTK4 native libs)
+├── deps.edn             ; glimmer + glimmer-gtk git deps (source + GTK4 native libs)
 └── src/app/
     ├── core.clj         ; state, cursors, reactions, mutations, run
     ├── persist.clj      ; save/load the world: the cell handler + the rebuild hook
@@ -91,7 +91,7 @@ image-dump-example/
 ## Run it
 
 ```sh
-jolt -M:run        # or: jolt run
+jolt -M:run        # or: jolt start
 ```
 
 This opens the window and blocks until you close it.

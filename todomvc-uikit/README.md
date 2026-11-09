@@ -1,10 +1,12 @@
-# glimmer-app
+# todomvc-uikit
 
-A standalone example app for [glimmer](https://github.com/jolt-lang/glimmer) — a reagent-style reactive
-GUI toolkit for the [Jolt](https://github.com/jolt-lang/jolt) Clojure dialect —
-rendering through its native macOS backend,
-[glimmer-uikit](https://github.com/jolt-lang/glimmer-uikit) (AppKit). It exercises the whole feature set in one cohesive app: a reactive task
-board.
+A TodoMVC for [glimmer](https://github.com/jolt-lang/glimmer) — a reagent-style
+reactive GUI toolkit for the [Jolt](https://github.com/jolt-lang/jolt) Clojure
+dialect — rendering through its native macOS backend,
+[glimmer-appkit](https://github.com/jolt-lang/glimmer-appkit) (AppKit). Despite
+the directory name it runs on the Mac, not the iPhone; glimmer's iOS backend is
+[glimmer-uikit](https://github.com/jolt-lang/glimmer-uikit). It exercises the
+whole feature set in one cohesive app: a reactive task board.
 
 ## What it showcases
 
@@ -15,10 +17,10 @@ board.
   derived from it.
 - **reactions** — read-only derived cells: `remaining`, `done-count`, and the
   `visible` task list (depends on the filter and sort cells at once).
-- **Form-1 components** (`app.widgets`) — `stat-card`, `filter-bar`,
+- **Form-1 components** (`app.widgets`) — `filter-bar`, `task-row`,
   `command-bar`; plain functions returning hiccup.
-- **Form-2 component** (`app.core/task-board`) — creates state, cursors, and
-  reactions once on mount, then renders from them.
+- **root component** (`app.core/todo-app`) — renders from state, cursors and
+  reactions held in top-level `defonce` cells, so a REPL reload keeps them.
 - **every event kind** — `:on-change` and `:on-activate` (entry), `:on-click`
   (buttons), `:on-toggled` (checkbutton).
 - **keyed list rendering** driven by a reaction — each row is keyed by task id,
@@ -31,17 +33,17 @@ board.
 ## Layout
 
 ```
-glimmer-app/
-├── deps.edn             ; glimmer + glimmer-uikit @ v0.1.0 (git deps)
+todomvc-uikit/
+├── deps.edn             ; glimmer v0.1.7 + glimmer-appkit v0.1.3 (git deps)
 └── src/app/
-    ├── core.clj         ; Form-2 root: state, cursors, reactions, mutations, run
+    ├── core.clj         ; root component, state, cursors, reactions, mutations
     └── widgets.clj      ; Form-1 reusable components
 ```
 
 ## Run it
 
 ```sh
-jolt -M:run        # or: jolt run
+jolt -M:run        # or: jolt start
 ```
 
 This opens the window and blocks until you close it. AppKit ships with macOS,
@@ -78,7 +80,7 @@ main thread.
 
 ```sh
 jolt build -m app.core
-./target/release/glimmer-app
+./target/release/todomvc-uikit
 ```
 
 The binary links AppKit, which ships with macOS — no extra libraries to install.

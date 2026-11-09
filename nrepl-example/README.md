@@ -40,7 +40,7 @@ jolt -M:test
 For an ad-hoc REPL into this project without running the app's main:
 
 ```
-jolt nrepl
+jolt nrepl-server
 ```
 
 ## Compile for release
@@ -63,7 +63,7 @@ close the server and stop the device loop). Connect an editor exactly as in dev
 
 ## How it works
 
-- `start-nrepl!` mirrors what `jolt nrepl` does: it blocks `SIGINT` on the main
+- `start-nrepl!` mirrors what `jolt nrepl-server` does: it blocks `SIGINT` on the main
   thread (so `^C` lands there, not on the server's socket `recv`), starts the
   server on a worker thread with the library middleware, and registers its stop
   fn as a shutdown hook.

@@ -1382,7 +1382,9 @@
         ba  (byte-array (map int src))
         ptr (ffi/alloc n)]
     (ffi/write-array ptr ba)
-    (let [back (vec (ffi/read-array ptr n))]
+    ;; read-array answers signed bytes, as a byte-array holds them; mask back
+    ;; to 0-255 to compare with src
+    (let [back (mapv #(bit-and % 0xff) (ffi/read-array ptr n))]
       (ffi/free ptr)
       (assert (= (count back) n) "read-array returns every byte written")
       (assert (= back src) "write-array/read-array round-trip is byte-exact")

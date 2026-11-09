@@ -32,7 +32,7 @@ board.
 
 ```
 glimmer-app/
-├── deps.edn             ; :local/root ../../glimmer + ../../glimmer-gtk (source + GTK4 native libs)
+├── deps.edn             ; glimmer + glimmer-gtk git deps (source + GTK4 native libs)
 └── src/app/
     ├── core.clj         ; Form-2 root: state, cursors, reactions, mutations, run
     └── widgets.clj      ; Form-1 reusable components
@@ -41,7 +41,7 @@ glimmer-app/
 ## Run it
 
 ```sh
-jolt -M:run        # or: jolt run
+jolt -M:run        # or: jolt start
 ```
 
 This opens the window and blocks until you close it.
