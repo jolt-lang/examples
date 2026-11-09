@@ -10,10 +10,6 @@
   with ig/init and stopped with ig/halt!. PORT / DATABASE_URL env vars override
   config.edn (applied in the :app/config init-key).
 
-  reitit and tick read their :clj branches, so those requires are scoped: reader
-  features are switched to :clj only for that load, then restored. Everything else
-  runs under jolt's default feature set, and the app serves under default features.
-
   jolt.crypto (OpenSSL-backed javax.crypto shims) is required before ring-defaults
   so ring-core's encrypted session-cookie store loads; ring-defaults then wraps the
   handler with params + static-resource + content-type + session middleware, so the
@@ -37,13 +33,10 @@
             [ring.middleware.defaults :as defaults]
             [ring-chez.adapter :as adapter]
             [ring-chez.middleware.multipart :as multipart]
+            [reitit.trie-jolt]
+            [reitit.core :as reitit]
+            [tick.core :as t]
             [app.db :as db]))
-
-;; Load reitit + tick under :clj features, then restore — see the ns docstring.
-(let [prev (__reader-features)]
-  (__reader-features-set! ["clj" "jolt" "default"])
-  (require '[reitit.trie-jolt] '[reitit.core :as reitit] '[tick.core :as t])
-  (__reader-features-set! prev))
 
 ;; SQLite's CURRENT_TIMESTAMP is "yyyy-MM-dd HH:mm:ss" (UTC). Parse it with tick
 ;; and render a friendlier form; fall back to the raw string if it doesn't parse.

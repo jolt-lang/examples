@@ -125,9 +125,9 @@ the template lazily on first render so the two modes stay distinct.)
 
 ## Notes
 
-This is the Chez port. reitit and tick read their `:clj` branches, so those
-requires are scoped to `:clj` reader features (see `app.core`); everything else
-runs under jolt's default feature set. ring-defaults' session-cookie store needs
+This is the Chez port. reitit and tick read their `:clj` branches, which jolt's
+default reader features include, so they load like any other dependency.
+ring-defaults' session-cookie store needs
 `javax.crypto` at load, so `app.core` requires `jolt.crypto` first. config.edn is an Integrant graph wired with `#ig/ref`;
 `-main` starts the system with `ig/init`, and the test drives an in-memory
 system through the same keys, hitting the live `:app/server` over HTTP.

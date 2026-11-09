@@ -40,8 +40,8 @@
          com.github.seancorfield/honeysql
            {:git/url "https://github.com/seancorfield/honeysql"
             :git/sha "726f899cb90514b153cef2dc657695a85883d16e"}
-         ;; reitit routing — needs JOLT_FEATURES with "clj" so reitit reads its
-         ;; :clj branches; jolt-lang/router mirrors the reitit.Trie Java class.
+         ;; reitit routing (jolt reads :clj reader branches by default);
+         ;; jolt-lang/router mirrors the reitit.Trie Java class.
          metosin/reitit-core {:mvn/version "0.10.1"}
          weavejester/integrant {:git/url "https://github.com/weavejester/integrant"
                                 :git/sha "bcad6bcf35b62d3a32a453dc26b6d3a4d659dc01"}
@@ -51,7 +51,7 @@
                            :git/sha "bfc05a155f450aeb97e767ccac9423b01155e82e"
                            :exclusions [weavejester/meta-merge]}
          ;; tick date/time (over jolt's java.time) + its cljc.java-time / time-
-         ;; literals deps; needs JOLT_FEATURES "clj" for the :clj reader branches.
+         ;; literals deps.
          juxt/tick {:git/url "https://github.com/juxt/tick"
                     :git/sha "3c2cc4e809c21476f63470cd3e5cb2ff8fa5ef69"}
          com.widdindustries/cljc.java-time {:git/url "https://github.com/henryw374/cljc.java-time"
