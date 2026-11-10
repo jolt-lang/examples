@@ -60,12 +60,24 @@ Absolute timings depend on the machine and the substrate, so the figures here
 are illustrative; what is stable is the *ratio* between the two variants run
 back-to-back on the same machine.
 
-The headline: **moving the data model from maps to records cuts the render
-roughly 2.6×.** Maps pay a keyword-hash lookup and a sorted-or-hashed
-allocation per vec op; records lay the fields out in declared order, read them
-by index, and construct ~2× cheaper. The material `Scatter` protocol turns what
-was a stored closure call into a devirtualizable protocol dispatch, and the
-field hints keep nested vecs typed so the inner arithmetic proves its reads.
+Which variant wins has changed as jolt got faster. Records led through jolt
+0.8.0 (at best ~1.45×, on 0.6.9). Map lookup and construction then got ~4.6×
+faster in 0.8.10, and since then the **map version is the faster one**: on
+0.8.25 maps render in ~1.7 s and records in ~3.0 s on an M-series Mac (mean
+ms per render, records under `JOLT_DIRECT_LINK=1`):
+
+| jolt | maps | records |
+|---|---|---|
+| 0.6.9 | 8588 | 5979 |
+| 0.8.0 | 7063 | 6911 |
+| 0.8.10 | 1523 | 4584 |
+| 0.8.25 | ~1700 | ~3000 |
+
+Records lay the fields out in declared order and read them by index; the
+material `Scatter` protocol turns what was a stored closure call into a
+protocol dispatch, and the field hints keep nested vecs typed. Those still
+help relative to older maps, but current record construction and dispatch cost
+more than jolt's inlined map paths on this program.
 
 Whole-program optimization is roughly neutral on this program because it is a
 single namespace: its main lever — direct-linking native `clojure.math/sqrt`
@@ -80,8 +92,7 @@ exist (jank 0.1-alpha `-O3 -Odirect-call` and Clojure JVM 1.12 on the naive map
 version, both well under 2 s on an M1 Max). Those were measured separately, not
 in a current head-to-head, so treat them as background rather than a direct
 comparison. The general phenomenon they point at holds regardless of substrate:
-a per-vec allocation in the inner loop is the dominant cost, and the data-model
-pivot from maps to records is what removes most of it.
+a per-vec allocation in the inner loop is the dominant cost.
 
 ## Why, concretely
 
