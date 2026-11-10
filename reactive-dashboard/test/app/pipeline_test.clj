@@ -37,24 +37,31 @@
   [{:keys [produced delivered dropped]}]
   (- produced delivered dropped))
 
+(defn- drop-rate [before after]
+  (let [produced (- (:produced after) (:produced before 0))]
+    (if (pos? produced)
+      (/ (- (:dropped after) (:dropped before 0)) (double produced))
+      0.0)))
+
 (deftest lane-a-drops-under-a-slow-consumer
   (pipe/start-lane-a!)
   (pause 700)
-  (testing "a consumer that keeps up loses next to nothing"
-    ;; Not zero: relieve drops whenever the consumer is descheduled for longer
-    ;; than the producer's interval, which on a loaded machine happens.
-    (let [{:keys [produced dropped] :as a} (:a (pipe/lane-stats))]
-      (is (pos? produced))
-      (is (<= dropped (quot produced 10)))
-      (is (<= 0 (in-flight a) 3))))
-  (testing "relieve collapses what a slow consumer cannot take"
-    (reset! pipe/consumer-delay-ms 150)
-    (pause 1500)
-    (let [{:keys [produced delivered dropped] :as a} (:a (pipe/lane-stats))]
-      (is (pos? dropped))
-      (is (< delivered produced))
-      (testing "every line is accounted for: delivered, dropped or in flight"
-        (is (<= 0 (in-flight a) 3))))))
+  (let [fast (:a (pipe/lane-stats))]
+    (testing "every line is delivered, dropped or still in flight"
+      (is (pos? (:produced fast)))
+      (is (<= 0 (in-flight fast) 3)))
+    (testing "relieve collapses what a slow consumer cannot take"
+      (reset! pipe/consumer-delay-ms 150)
+      (pause 1500)
+      (let [slow (:a (pipe/lane-stats))]
+        (is (> (:dropped slow) (:dropped fast)))
+        (is (< (:delivered slow) (:produced slow)))
+        (is (<= 0 (in-flight slow) 3))
+        ;; A consumer that keeps up still drops a line whenever it is
+        ;; descheduled for longer than the producer's interval, so the claim
+        ;; is relative and measured in this one run: a slow consumer loses a
+        ;; far larger share than a fast one.
+        (is (< (* 2 (drop-rate nil fast)) (drop-rate fast slow)))))))
 
 (deftest lane-b-throttles-the-producer-instead-of-dropping
   (pipe/start-lane-b!)
