@@ -95,7 +95,8 @@
 (defn net-rates
   "Two `parse-netdev` snapshots and the gap between them -> bytes per second,
   per interface plus a total across all of them. Loopback is excluded from the
-  total: it is real traffic, but it does not traverse the network."
+  total: it is real traffic, but it does not traverse the network. Linux
+  calls it lo, macOS lo0."
   [prev cur dt-ms]
   (let [dt (max (or dt-ms 0) 1)
         per (into {}
@@ -103,7 +104,7 @@
                         :let [p (get prev iface)]]
                     [iface {:rx-bps (if p (max 0.0 (* 1000.0 (safe-div (- rx-bytes (:rx-bytes p)) dt))) 0.0)
                             :tx-bps (if p (max 0.0 (* 1000.0 (safe-div (- tx-bytes (:tx-bytes p)) dt))) 0.0)}]))
-        wired (remove (fn [[iface _]] (= "lo" iface)) per)]
+        wired (remove (fn [[iface _]] (re-matches #"lo\d*" iface)) per)]
     {:interfaces per
      :rx-bps (reduce + 0.0 (map (comp :rx-bps val) wired))
      :tx-bps (reduce + 0.0 (map (comp :tx-bps val) wired))}))

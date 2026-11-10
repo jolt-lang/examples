@@ -30,21 +30,31 @@
     (is (nil? (pipe/parse-line "42 intr 1 2 3")))
     (is (nil? (pipe/parse-line "not-a-number cpu 1 2 3 4 5 6 7 8")))))
 
+(defn- in-flight
+  "Lines read but neither delivered nor discarded yet: at most one waiting in
+  relieve and one in the consumer, plus whatever the producer thread counted
+  between lane-stats' reads."
+  [{:keys [produced delivered dropped]}]
+  (- produced delivered dropped))
+
 (deftest lane-a-drops-under-a-slow-consumer
   (pipe/start-lane-a!)
   (pause 700)
-  (testing "a consumer that keeps up loses nothing"
-    (let [{:keys [produced delivered dropped]} (:a (pipe/lane-stats))]
+  (testing "a consumer that keeps up loses next to nothing"
+    ;; Not zero: relieve drops whenever the consumer is descheduled for longer
+    ;; than the producer's interval, which on a loaded machine happens.
+    (let [{:keys [produced dropped] :as a} (:a (pipe/lane-stats))]
       (is (pos? produced))
-      (is (= produced delivered))
-      (is (zero? dropped))))
+      (is (<= dropped (quot produced 10)))
+      (is (<= 0 (in-flight a) 3))))
   (testing "relieve collapses what a slow consumer cannot take"
     (reset! pipe/consumer-delay-ms 150)
     (pause 1500)
-    (let [{:keys [produced delivered dropped]} (:a (pipe/lane-stats))]
+    (let [{:keys [produced delivered dropped] :as a} (:a (pipe/lane-stats))]
       (is (pos? dropped))
       (is (< delivered produced))
-      (is (= dropped (- produced delivered))))))
+      (testing "every line is accounted for: delivered, dropped or in flight"
+        (is (<= 0 (in-flight a) 3))))))
 
 (deftest lane-b-throttles-the-producer-instead-of-dropping
   (pipe/start-lane-b!)

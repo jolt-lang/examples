@@ -2,6 +2,7 @@
   "Runs every test namespace in the project."
   (:require [clojure.test :as t]
             [app.metrics-test]
+            [app.host-test]
             [app.state-test]
             [app.pipeline-test]
             [app.tasks-test]
@@ -10,6 +11,7 @@
 
 (def namespaces
   '[app.metrics-test
+    app.host-test
     app.state-test
     app.pipeline-test
     app.tasks-test

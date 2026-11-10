@@ -1,8 +1,9 @@
 # reactive-dashboard
 
 A live system monitor for jolt that renders in the browser over server-sent
-events. CPU, memory and network figures come out of `/proc`, so the page shows
-what the machine is doing. The burst control spawns real processes rather than
+events. CPU, memory and network figures come out of `/proc` on Linux and out of
+the kernel's host statistics on macOS, so the page shows what the machine is
+doing. The burst control spawns real processes rather than
 simulating load.
 
 Three libraries split the work. [ebb](https://github.com/jlt-commons/ebb), the
@@ -15,7 +16,7 @@ pushes a re-rendered fragment to the page whenever that state changes.
 
 ```
 jolt serve       # http://127.0.0.1:3000
-jolt -M:test     # 34 tests, a few of which spawn real child processes
+jolt -M:test     # 41 tests, a few of which spawn real child processes
 jolt build -m app.core
 ```
 
@@ -100,6 +101,10 @@ and the alert fires on measured data rather than a scripted value.
   it through ring.
 - `app.metrics` and `app.diagram` are pure. One parses `/proc` text, the other
   lays out the event graph that the Model panel draws.
+- `app.host` is the platform seam. On Linux it reads `/proc`; on macOS it asks
+  Mach and sysctl through jolt.ffi (and `netstat` for interface counters) and
+  writes the answers in `/proc` formats, so the parsers do not know the
+  difference.
 
 Domino stays pure and synchronous, which leaves every fiber, retry, timeout and
 cancel on the ebb side. The UI is a function of the published snapshot and

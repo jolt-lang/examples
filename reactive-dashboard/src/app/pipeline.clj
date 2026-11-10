@@ -29,21 +29,16 @@
             [babashka.process :as p]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [app.host :as host]
             [app.metrics :as metrics]
             [app.state :as state]))
 
 (defn- now [] (System/currentTimeMillis))
 
-;; A producer fast enough to overwhelm a browser: one /proc/stat line every
-;; 20ms, sequence-numbered so the consumer can tell how far behind real time
-;; the producer has fallen. `read -r line < /proc/stat` avoids forking a
-;; process per sample; only `sleep` costs a fork.
-(def producer-script
-  ;; `|| exit 0` is the orphan guard: once our end of the pipe is gone the echo
-  ;; fails with EPIPE and the producer exits instead of looping forever on
-  ;; broken-pipe errors. It covers the exits a shutdown hook does not -- and on
-  ;; this jolt the hook does not run on SIGINT at all.
-  "i=0; while :; do i=$((i+1)); read -r line < /proc/stat; echo \"$i $line\" || exit 0; sleep 0.02; done")
+;; A producer fast enough to overwhelm a browser: one line every 20ms,
+;; sequence-numbered so the consumer can tell how far behind real time the
+;; producer has fallen. The script itself is per platform: see `app.host`.
+(def producer-script (host/producer-script))
 
 (def producer-hz 50)
 
@@ -119,8 +114,10 @@
          (kill! proc)
          (state/log! :ebb (str "lane " (name k) ": cancelled, destroyed pid " (pid proc))))))))
 
-(defn- lane-a-flow [produced delivered]
-  (let [source (m/relieve (fn [_ x] x) (observed-lines :a produced))]
+(defn- lane-a-flow [produced delivered dropped]
+  ;; relieve calls its reducer once per value the consumer never took, so
+  ;; counting the calls counts the drops exactly
+  (let [source (m/relieve (fn [_ x] (swap! dropped inc) x) (observed-lines :a produced))]
     (m/ap
      (let [line (m/?> source)]
        ;; the simulated render cost: parking here lets the upstream relieve
@@ -162,9 +159,9 @@
                         (do (m/? (m/sleep interval-ms)) (recur))))))
 
 (defn- read-proc []
-  {:stat (metrics/parse-stat (slurp "/proc/stat"))
-   :mem  (metrics/parse-meminfo (slurp "/proc/meminfo"))
-   :net  (metrics/parse-netdev (slurp "/proc/net/dev"))
+  {:stat (metrics/parse-stat (host/stat-text))
+   :mem  (metrics/parse-meminfo (host/meminfo-text))
+   :net  (metrics/parse-netdev (host/netdev-text))
    :at   (now)})
 
 (defn- probe-task
@@ -227,10 +224,10 @@
 
 (defn start-lane-a! []
   (when-not (running? :a)
-    (let [produced (atom 0) delivered (atom 0) started (now)]
+    (let [produced (atom 0) delivered (atom 0) dropped (atom 0) started (now)]
       (swap! lanes update :a merge {:produced produced :delivered delivered
-                                    :started started :last nil})
-      (start! :a (lane-a-flow produced delivered)
+                                    :dropped dropped :started started :last nil})
+      (start! :a (lane-a-flow produced delivered dropped)
               (fn [row] (swap! lanes assoc-in [:a :last] row))))))
 
 (defn start-lane-b! []
@@ -271,14 +268,17 @@
   []
   (let [{:keys [a b]} @lanes
         elapsed  (fn [t] (max 1 (- (now) (or t (now)))))
-        produced @(:produced a (atom 0))
+        ;; produced is read last: every line is produced before it is
+        ;; delivered or dropped, so produced >= delivered + dropped holds
         delivered @(:delivered a (atom 0))
+        dropped  @(:dropped a (atom 0))
+        produced @(:produced a (atom 0))
         consumed @(:consumed b (atom 0))
         b-seq    (:seq (:last b) 0)
         free-run (long (* producer-hz (/ (elapsed (:started b)) 1000.0)))]
     {:a {:running? (running? :a) :pid (pid (:proc a))
          :produced produced :delivered delivered
-         :dropped (max 0 (- produced delivered))
+         :dropped dropped
          :last (:last a)}
      :b {:running? (running? :b) :pid (pid (:proc b))
          :consumed consumed :producer-seq b-seq
