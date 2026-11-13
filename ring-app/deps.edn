@@ -7,7 +7,7 @@
  ;; pure-Clojure libraries pulled straight from their git repos and run unchanged.
  :deps {io.github.jolt-lang/time
         {:git/url "https://github.com/jolt-lang/time.git"
-         :git/sha "753905d0e694600f593b9904e880a8a8379fb7b1"}
+         :git/sha "a6690ca1ae69585681965823959eef33707239ce"}
           jolt-lang/ring-chez-adapter
             {:git/url "https://github.com/jolt-lang/ring-chez-adapter"
              :git/tag "v0.9.0"
