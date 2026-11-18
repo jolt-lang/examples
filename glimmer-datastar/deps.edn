@@ -10,8 +10,8 @@
          :git/sha "c2c2462ab10503c4927d4bbf03e72a29ea7aa531"}
         jolt-lang/glimmer-datastar
         {:git/url "https://github.com/jolt-lang/glimmer-datastar"
-         :git/tag "v0.1.8"
-         :git/sha "9435b799645f720ed3599c5a0458fecb2f8f36c7"}
+         :git/tag "v0.1.12"
+         :git/sha "1ee12aaaf587c5fae22cb94747fe280c20e3380b"}
         ;; hiccup 2.0.0 (verified jolt-compatible; see examples/hiccup-app)
         weavejester/hiccup
         {:git/url "https://github.com/weavejester/hiccup"
