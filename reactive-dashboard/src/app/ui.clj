@@ -117,7 +117,7 @@
                [:dt "probe"] [:dd {:class (when (= :stale (:status probe)) "hot")}
                               (str (name (:status probe :off))
                                    (when (:took probe) (str " · " (:took probe) "ms")))]
-               [:dt "discipline"] [:dd "m/ap + m/sleep (procfs polls)"]])])
+               [:dt "discipline"] [:dd "m/ap + m/sleep (host polls)"]])])
 
 (defn- cascade-panel [changes]
   (let []

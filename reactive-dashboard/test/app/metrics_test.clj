@@ -103,3 +103,65 @@ SwapTotal:       2000000 kB
 (deftest loadavg
   (is (= {:1m 0.67 :5m 1.1 :15m 1.35}
          (metrics/parse-loadavg "0.67 1.10 1.35 2/1234 5678\n"))))
+
+;; ---------------------------------------------------------------- macOS
+
+(deftest cpu-ticks-take-the-parse-stat-shape
+  ;; host_processor_info: per core [user system idle nice], cumulative
+  (let [t0 (metrics/cpu-ticks->stat [[100 50 800 0] [10 10 980 0]])
+        t1 (metrics/cpu-ticks->stat [[200 50 900 0] [10 10 1080 0]])]
+    (is (= {:id "cpu" :busy 170 :iowait 0 :total 1950} (:aggregate t0)))
+    (is (= ["cpu0" "cpu1"] (map :id (:cores t0))))
+    (is (= {:id "cpu0" :busy 150 :iowait 0 :total 950} (first (:cores t0))))
+    (testing "and feed cpu-load like /proc/stat snapshots"
+      (let [{:keys [cpu cores io-wait]} (metrics/cpu-load t0 t1)]
+        (is (= 0.5 (first cores)))
+        (is (= 0.0 (second cores)))
+        (is (= (/ 100.0 300) cpu))
+        (is (= 0.0 io-wait))))))
+
+(def vm-stat-text
+  "Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               1000.
+Pages active:                             5000.
+Pages inactive:                           2000.
+Pages speculative:                         500.
+Pages throttled:                             0.
+Pages wired down:                         1500.
+Pages purgeable:                           100.
+\"Translation faults\":               52490319762.
+File-backed pages:                        2200.
+Pages occupied by compressor:              300.
+")
+
+(deftest vm-stat-reports-like-meminfo
+  ;; available is free + inactive + speculative pages, as kB
+  (let [m (metrics/parse-vm-stat vm-stat-text (* 16 1024 1024 10))]
+    (is (= 163840 (:total-kb m)))
+    (is (= 16000 (:free-kb m)))
+    (is (= 56000 (:available-kb m)))
+    (is (= 35200 (:cached-kb m)))
+    (is (= 107840 (:used-kb m)))
+    (is (= (/ 107840.0 163840) (:used-frac m)))))
+
+(def netstat-text
+  "Name       Mtu   Network       Address            Ipkts Ierrs     Ibytes    Opkts Oerrs     Obytes  Coll
+lo0        16384 <Link#1>                      137822315     0 145173407503 137822315     0 145173407503     0
+lo0        16384 127           127.0.0.1       137822315     - 145173407503 137822315     - 145173407503     -
+gif0*      1280  <Link#2>                             0     0          0        0     0          0     0
+en0        1500  <Link#11>   a2:10:4c:69:74:c0  5000     0    9000000     4000     0    1200000     0
+en0        1500  192.168.1     192.168.1.20      5000     -    9000000     4000     -    1200000     -
+")
+
+(deftest netstat-reads-link-rows-only
+  (is (= {"lo0"  {:rx-bytes 145173407503 :tx-bytes 145173407503}
+          "gif0" {:rx-bytes 0 :tx-bytes 0}
+          "en0"  {:rx-bytes 9000000 :tx-bytes 1200000}}
+         (metrics/parse-netstat-ib netstat-text))))
+
+(deftest net-rates-skip-darwin-loopback
+  (let [prev {"lo0" {:rx-bytes 0 :tx-bytes 0} "en0" {:rx-bytes 0 :tx-bytes 0}}
+        cur  {"lo0" {:rx-bytes 5000 :tx-bytes 5000} "en0" {:rx-bytes 1000 :tx-bytes 500}}
+        {:keys [rx-bps tx-bps]} (metrics/net-rates prev cur 1000)]
+    (is (= 1000.0 rx-bps))
+    (is (= 500.0 tx-bps))))

@@ -1,8 +1,8 @@
 ;; Live pipeline dashboard. Read at runtime, so it stays next to the binary.
 {:port 3000
 
- ;; Lane C: how often the /proc sampler ticks. procfs has no push, so this
- ;; lane polls on a timer.
+ ;; Lane C: how often the host sampler ticks (/proc on Linux, Mach and
+ ;; vm_stat on macOS). Neither pushes, so this lane polls on a timer.
  :sample-interval-ms 500
 
  ;; how many samples the derived-stat window keeps
