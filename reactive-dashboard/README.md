@@ -1,8 +1,9 @@
 # reactive-dashboard
 
 A live system monitor for jolt that renders in the browser over server-sent
-events. CPU, memory and network figures come out of `/proc`, so the page shows
-what the machine is doing. The burst control spawns real processes rather than
+events. CPU, memory and network figures come from the machine itself, so the
+page shows what it is doing: `/proc` on Linux, and on macOS Mach's
+`host_processor_info` (through `jolt.ffi`), `vm_stat` and `netstat -ib`. The burst control spawns real processes rather than
 simulating load.
 
 Three libraries split the work. [ebb](https://github.com/jlt-commons/ebb), the
@@ -98,8 +99,10 @@ and the alert fires on measured data rather than a scripted value.
   cancellable export and the load generator all sit there.
 - `app.ui` and `app.core` render hiccup from one published snapshot, then serve
   it through ring.
-- `app.metrics` and `app.diagram` are pure. One parses `/proc` text, the other
-  lays out the event graph that the Model panel draws.
+- `app.metrics` and `app.diagram` are pure. One parses `/proc`, `vm_stat` and
+  `netstat` text, the other lays out the event graph that the Model panel draws.
+- `app.host` reads the machine for the current OS and returns the same
+  snapshot shape on both, so nothing after lane C knows which one it is on.
 
 Domino stays pure and synchronous, which leaves every fiber, retry, timeout and
 cancel on the ebb side. The UI is a function of the published snapshot and
@@ -108,8 +111,10 @@ nothing else.
 ## Streamed and polled
 
 Two of the lanes are push-driven. A child process writes one line per sample
-into a pipe, and ebb reads that pipe as a flow. Lane C is different: procfs
-builds its files at read time and leaves nothing to subscribe to. The kernel
+into a pipe, and ebb reads that pipe as a flow. On macOS the line carries a
+counter instead of a `/proc/stat` row; the lanes measure the sequence number,
+not the payload. Lane C is different: procfs builds its files at read time and
+leaves nothing to subscribe to, and neither Mach nor `vm_stat` pushes either. The kernel
 can push pressure events through PSI at `/proc/pressure`, but arming a trigger
 requires privileges, so lane C polls on a timer and its lane card is labeled as
 a poll loop.

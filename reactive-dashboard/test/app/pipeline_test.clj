@@ -22,12 +22,17 @@
   (zero? (:exit (babashka.process/shell {:out :string :err :string :continue true}
                                         "kill" "-0" (str pid)))))
 
+(deftest parse-line-keeps-the-sequence-of-a-non-cpu-payload
+  ;; the macOS producer has no /proc/stat to echo; the sequence number is what
+  ;; lane B's throttling claim is measured by
+  (is (= {:seq 7} (pipe/parse-line "7 tick 12"))))
+
 (deftest parse-line-reads-the-producer-format
   (is (= {:seq 42 :busy 1530 :total 9630}
          (pipe/parse-line "42 cpu  1000 10 500 8000 100 0 20 0 0 0")))
-  (testing "anything that is not a sequenced cpu line is ignored"
+  (testing "a line without a leading sequence number is ignored"
     (is (nil? (pipe/parse-line "")))
-    (is (nil? (pipe/parse-line "42 intr 1 2 3")))
+    (is (nil? (pipe/parse-line "/proc/stat: No such file or directory")))
     (is (nil? (pipe/parse-line "not-a-number cpu 1 2 3 4 5 6 7 8")))))
 
 (deftest lane-a-drops-under-a-slow-consumer

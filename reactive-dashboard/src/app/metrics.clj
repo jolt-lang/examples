@@ -103,10 +103,67 @@
                         :let [p (get prev iface)]]
                     [iface {:rx-bps (if p (max 0.0 (* 1000.0 (safe-div (- rx-bytes (:rx-bytes p)) dt))) 0.0)
                             :tx-bps (if p (max 0.0 (* 1000.0 (safe-div (- tx-bytes (:tx-bytes p)) dt))) 0.0)}]))
-        wired (remove (fn [[iface _]] (= "lo" iface)) per)]
+        ;; lo on Linux, lo0 on macOS
+        wired (remove (fn [[iface _]] (str/starts-with? iface "lo")) per)]
     {:interfaces per
      :rx-bps (reduce + 0.0 (map (comp :rx-bps val) wired))
      :tx-bps (reduce + 0.0 (map (comp :tx-bps val) wired))}))
+
+;; ------------------------------------------------------------------ macOS
+;;
+;; macOS has no /proc. The same three readings come from a Mach call and two
+;; commands, and land in the shapes the /proc parsers return, so everything
+;; downstream of the ingestion lane is shared.
+
+(defn cpu-ticks->stat
+  "host_processor_info's per-core [user system idle nice] tick counts ->
+  the `parse-stat` shape. Mach keeps no iowait counter, so it reads 0."
+  [cores]
+  (let [core (fn [id [user system idle nice]]
+               (let [busy (+ user system nice)]
+                 {:id id :busy busy :iowait 0 :total (+ busy idle)}))
+        per  (vec (map-indexed (fn [i ticks] (core (str "cpu" i) ticks)) cores))]
+    {:aggregate {:id "cpu"
+                 :busy (reduce + 0 (map :busy per))
+                 :iowait 0
+                 :total (reduce + 0 (map :total per))}
+     :cores per}))
+
+(defn parse-vm-stat
+  "`vm_stat` text and hw.memsize in bytes -> the `parse-meminfo` shape.
+  Available is free + inactive + speculative pages: what the kernel can hand
+  out without paging anything to the compressor or disk."
+  [text memsize]
+  (let [page (or (some-> (re-find #"page size of (\d+) bytes" text) second parse-long) 4096)
+        kv   (into {} (for [line (str/split-lines text)
+                            :let [[_ k v] (re-matches #"\s*\"?([^\":]+)\"?:\s*(\d+)\.?\s*" line)]
+                            :when k]
+                        [k (parse-long v)]))
+        kb   (fn [k] (quot (* page (get kv k 0)) 1024))
+        total     (quot (or memsize 0) 1024)
+        available (+ (kb "Pages free") (kb "Pages inactive") (kb "Pages speculative"))]
+    {:total-kb     total
+     :free-kb      (kb "Pages free")
+     :available-kb available
+     :cached-kb    (kb "File-backed pages")
+     :used-kb      (- total available)
+     :used-frac    (safe-div (- total available) total)}))
+
+(defn parse-netstat-ib
+  "`netstat -ib -n` text -> the `parse-netdev` shape. Only the <Link#n> row
+  of each interface is read: the address rows below it repeat its counters.
+  A link row carries a MAC address or nothing in the Address column, so the
+  counters are found from the end: Ibytes is the fifth field back, Obytes
+  the second."
+  [text]
+  (into {}
+        (for [line (rest (str/split-lines text))
+              :let [tokens (remove str/blank? (str/split (str/trim line) #"\s+"))]
+              :when (and (>= (count tokens) 9) (str/starts-with? (nth tokens 2) "<Link#"))]
+          (let [n (count tokens)]
+            [(str/replace (first tokens) #"\*$" "")
+             {:rx-bytes (or (parse-long (nth tokens (- n 5))) 0)
+              :tx-bytes (or (parse-long (nth tokens (- n 2))) 0)}]))))
 
 ;; -------------------------------------------------------------- loadavg
 

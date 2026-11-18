@@ -12,9 +12,10 @@
                              `m/via m/blk`. Nothing is dropped; instead the
                              consumer's demand reaches the OS pipe and the
                              producer itself stalls.
-    lane C  polled           /proc read on a timer. procfs materializes its
-                             files on read, so there is no push to subscribe
-                             to and this lane is a poll loop.
+    lane C  polled           host figures read on a timer (procfs on Linux,
+                             Mach and vm_stat/netstat on macOS -- see
+                             app.host). Neither pushes, so this lane is a
+                             poll loop.
 
   Lane C is the dashboard's metric source: it transacts `[:sample]` and the
   Domino cascade does the rest. Lanes A and B carry the same kind of data but
@@ -29,21 +30,11 @@
             [babashka.process :as p]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [app.host :as host]
             [app.metrics :as metrics]
             [app.state :as state]))
 
 (defn- now [] (System/currentTimeMillis))
-
-;; A producer fast enough to overwhelm a browser: one /proc/stat line every
-;; 20ms, sequence-numbered so the consumer can tell how far behind real time
-;; the producer has fallen. `read -r line < /proc/stat` avoids forking a
-;; process per sample; only `sleep` costs a fork.
-(def producer-script
-  ;; `|| exit 0` is the orphan guard: once our end of the pipe is gone the echo
-  ;; fails with EPIPE and the producer exits instead of looping forever on
-  ;; broken-pipe errors. It covers the exits a shutdown hook does not -- and on
-  ;; this jolt the hook does not run on SIGINT at all.
-  "i=0; while :; do i=$((i+1)); read -r line < /proc/stat; echo \"$i $line\" || exit 0; sleep 0.02; done")
 
 (def producer-hz 50)
 
@@ -77,19 +68,21 @@
   ;; producer's next echo dies with EPIPE, which is expected behaviour and not
   ;; worth logging.
   (let [proc (p/process {:out :stream :err :write :err-file (io/file "/dev/null")}
-                        "bash" "-c" producer-script)]
+                        "bash" "-c" host/producer-script)]
     (swap! lanes assoc-in [k :proc] proc)
     (state/log! :ebb (str "lane " (name k) ": spawned producer pid " (pid proc)))
     proc))
 
 (defn parse-line
-  "\"<seq> cpu <jiffies...>\" -> {:seq n :busy n :total n}, or nil for noise."
+  "\"<seq> <payload>\" -> {:seq n}, plus :busy and :total when the payload is
+  a /proc/stat cpu line. nil when there is no leading sequence number."
   [line]
   (let [[n rest-of] (str/split (str/trim (or line "")) #"\s+" 2)]
-    (when (and rest-of (str/starts-with? rest-of "cpu"))
-      (let [{:keys [aggregate]} (metrics/parse-stat rest-of)]
-        (when-let [seq-n (parse-long n)]
-          {:seq seq-n :busy (:busy aggregate) :total (:total aggregate)})))))
+    (when-let [seq-n (parse-long (or n ""))]
+      (if (and rest-of (str/starts-with? rest-of "cpu"))
+        (let [{:keys [aggregate]} (metrics/parse-stat rest-of)]
+          {:seq seq-n :busy (:busy aggregate) :total (:total aggregate)})
+        {:seq seq-n}))))
 
 ;; ------------------------------------------------- lane A: push, then relieve
 
@@ -153,7 +146,7 @@
      (swap! consumed inc)
      (parse-line line))))
 
-;; --------------------------------------------------- lane C: the /proc poll
+;; --------------------------------------------------- lane C: the host poll
 
 (defn- ticker
   "A flow emitting immediately and then every `interval-ms`."
@@ -161,11 +154,8 @@
   (m/ap (loop [] (m/amb (m/? (m/sleep 0 :tick))
                         (do (m/? (m/sleep interval-ms)) (recur))))))
 
-(defn- read-proc []
-  {:stat (metrics/parse-stat (slurp "/proc/stat"))
-   :mem  (metrics/parse-meminfo (slurp "/proc/meminfo"))
-   :net  (metrics/parse-netdev (slurp "/proc/net/dev"))
-   :at   (now)})
+(defn- read-host []
+  (assoc (host/snapshot) :at (now)))
 
 (defn- probe-task
   "The enrichment step of scenario 4: a dependency that is usually quick and
@@ -188,8 +178,9 @@
 
 (defn- lane-c-flow [interval-ms]
   (->> (m/ap (let [_ (m/?> (ticker interval-ms))]
-               ;; slurp is a blocking read: keep it off the flow's thread
-               (m/? (m/via m/blk (read-proc)))))
+               ;; the snapshot blocks on reads and child processes: keep it
+               ;; off the flow's thread
+               (m/? (m/via m/blk (read-host)))))
        (m/reductions (fn [{:keys [raw]} cur]
                        {:raw cur :sample (when raw (derive-sample raw cur))})
                      {:raw nil :sample nil})
@@ -248,6 +239,9 @@
               (fn [sample]
                 (swap! samples inc)
                 (state/transact! [[[:sample] sample]])))
+      ;; the label names this OS's source
+      (state/transact! [[[:lanes :c] (assoc (get-in (state/db) [:lanes :c])
+                                            :label host/source-label)]])
       ;; the probe rides alongside the sampler rather than inside it, so a slow
       ;; probe can never delay a sample
       (start! :probe
